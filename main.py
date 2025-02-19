@@ -1,7 +1,7 @@
 # main.py
 import sys
 from langchain.schema import HumanMessage, SystemMessage
-from chat.chain import create_chat_chain
+from chat.chain import pretty_print_stream_chunk, graph
 
 def main():
     print("\n" + "="*50)
@@ -10,7 +10,6 @@ def main():
     print("="*50 + "\n")
     
     try:
-        agent_executor = create_chat_chain()
         
         while True:
             user_input = input("\nYou: ").strip()
@@ -24,8 +23,12 @@ def main():
                 continue
                 
             try:
-                response = agent_executor.invoke({"input": user_input})
-                print(f"\nJ.A.R.V.I.S.: {response['output']}")
+                # NOTE: we're specifying `user_id` to save memories for a given user
+                config = {"configurable": {"user_id": "1", "thread_id": "1"}}
+
+                for chunk in graph.stream({"messages": [("user", user_input)]}, config=config):
+                    pretty_print_stream_chunk(chunk)
+                # print(f"\nJ.A.R.V.I.S.: {response['output']}")
                 
             except Exception as e:
                 print(f"\nOops! Something went wrong: {str(e)}")
