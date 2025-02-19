@@ -10,14 +10,13 @@ def main():
     print("="*50 + "\n")
     
     try:
-        chat, system_prompt = create_chat_chain()
-        messages = [SystemMessage(content=system_prompt)]
+        agent_executor = create_chat_chain()
         
         while True:
             user_input = input("\nYou: ").strip()
             
             if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
-                print("\nJ.A.R.V.I.S.: Powering down systems. Have a wonderful day. Do let me know if you need anything else.")
+                print("\nJ.A.R.V.I.S.: Goodbye, Sir!")
                 break
                 
             if not user_input:
@@ -25,25 +24,9 @@ def main():
                 continue
                 
             try:
-                # Add user message to context
-                messages.append(HumanMessage(content=user_input))
+                response = agent_executor.invoke({"input": user_input})
+                print(f"\nJ.A.R.V.I.S.: {response['output']}")
                 
-                # Get streaming response
-                print("\nAssistant: ", end="", flush=True)
-                response_content = ""
-                for chunk in chat.stream(messages).tool_calls:
-                    content_chunk = chunk.content
-                    print(content_chunk, end="", flush=True)
-                    response_content += content_chunk
-                print()  # New line after response
-                
-                # Add assistant response to context
-                messages.append(HumanMessage(content=response_content))
-                
-                # Keep context window manageable (last 5 exchanges)
-                if len(messages) > 11:  # system prompt + 5 exchanges (2 messages each)
-                    messages = [messages[0]] + messages[-10:]
-                    
             except Exception as e:
                 print(f"\nOops! Something went wrong: {str(e)}")
                 print("Please try again!")
