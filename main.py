@@ -1,7 +1,8 @@
 # main.py
 import sys
 from langchain.schema import HumanMessage, SystemMessage
-from chat.chain import pretty_print_stream_chunk, graph
+from chat.chain import graph
+from utils.pretty_print import pretty_print_stream_chunk
 
 def main():
     print("\n" + "="*50)
@@ -27,6 +28,7 @@ def main():
                 config = {"configurable": {"user_id": "1", "thread_id": "1"}}
 
                 for chunk in graph.stream({"messages": [("user", user_input)]}, config=config):
+                    # print(chunk)
                     pretty_print_stream_chunk(chunk)
                 # print(f"\nJ.A.R.V.I.S.: {response['output']}")
                 
