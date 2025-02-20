@@ -82,9 +82,16 @@ def save_recall_memory(memory: str, config: RunnableConfig) -> str:
     return memory_with_date
 
 @tool
-def search_recall_memories(query: str, config: RunnableConfig) -> List[str]:
-    """Search for relevant memories."""
-    documents = recall_vector_store.similarity_search(query, k=10)
+def search_recall_memories(query: str, config: RunnableConfig, k: int = 10) -> List[str]:
+    """Search for relevant memories.
+    
+    Args:
+        query (str): The search query
+        k (int): Number of top matching memories to return (default is 10)
+    Returns:
+        List[str]: List of matching memory strings
+    """
+    documents = recall_vector_store.similarity_search(query, k=k)
     return [document.page_content for document in documents]
 
 @tool
