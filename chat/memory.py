@@ -51,14 +51,6 @@ except Exception as e:
 import uuid
 
 
-def get_user_id(config: RunnableConfig) -> str:
-    user_id = config["configurable"].get("user_id")
-    if user_id is None:
-        raise ValueError("User ID needs to be provided to save a memory.")
-
-    return user_id
-
-
 @tool
 def save_recall_memory(memory: str, config: RunnableConfig) -> str:
     """Save memory to vectorstore for later semantic retrieval."""
@@ -67,15 +59,21 @@ def save_recall_memory(memory: str, config: RunnableConfig) -> str:
     # Include the full formatted date in the memory content
     memory_with_date = f"On {time_context['formatted']}: {memory}"
     
+    memory_id = str(uuid.uuid4())
+
     document = Document(
         page_content=memory_with_date,
+        id=memory_id,
         metadata={
-            "id": str(uuid.uuid4()),
+            "id": memory_id,
             "timestamp": time_context['datetime'].isoformat(),
             "day_of_week": time_context['day_of_week'],
             "date": time_context['date'],
             "time": time_context['time'],
-            "timezone": time_context['timezone']
+            "timezone": time_context['timezone'],
+            "is_edited": False,
+            "original_timestamp": time_context['datetime'].isoformat(),  # Same as timestamp for new memories
+            "edit_timestamp": None  # No edits yet
         }
     )
     recall_vector_store.add_documents([document])
@@ -104,20 +102,36 @@ def delete_specific_memory(memory_texts: str | list[str], config: RunnableConfig
     
     try:
         for memory_text in memory_texts:
-            docs = recall_vector_store.similarity_search(memory_text, k=1)
-            if not docs or docs[0].page_content != memory_text:
+            # Search for memories that contain the provided text
+            docs = recall_vector_store.similarity_search(memory_text, k=5)
+            matching_doc = None
+            
+            # Find exact match by checking if the memory text is contained in the full content
+            for doc in docs:
+                content = doc.page_content
+                # Strip out the date prefix if it exists
+                if ": " in content:
+                    content = content.split(": ", 1)[1]
+                # Strip out edit marker and everything after if it exists
+                if " (Originally from " in content:
+                    content = content.split(" (Originally from ")[0]
+                
+                if content.strip() == memory_text.strip():
+                    matching_doc = doc
+                    break
+            
+            if not matching_doc:
                 results.append(f"Could not find exact memory: {memory_text}")
                 continue
             
-            doc = docs[0]
-            doc_id = doc.metadata.get('id') or doc.id
+            doc_id = matching_doc.metadata.get('id')
             if not doc_id:
                 results.append(f"Failed to delete (no ID): {memory_text}")
                 continue
 
             recall_vector_store.delete([doc_id])
             deleted_count += 1
-            results.append(f"Successfully deleted: {memory_text}")
+            results.append(f"Successfully deleted: {matching_doc.page_content}")
         
         # Only save if we actually deleted something
         if deleted_count > 0:
@@ -129,6 +143,80 @@ def delete_specific_memory(memory_texts: str | list[str], config: RunnableConfig
         error_msg = f"Error during memory deletion: {str(e)}"
         results.append(error_msg)
         return "\n".join(results)
+
+@tool
+def update_recall_memory(old_memory_text: str, new_memory_text: str, config: RunnableConfig) -> str:
+    """Update an existing memory while preserving its original timestamp.
+    
+    Args:
+        old_memory_text: The exact text of the memory to update
+        new_memory_text: The new text to replace the old memory
+    Returns:
+        String describing the result of the update
+    """
+    try:
+        # Find the existing memory
+        docs = recall_vector_store.similarity_search(old_memory_text, k=5)
+        matching_doc = None
+        
+        # Find exact match by checking if the memory text is contained in the full content
+        for doc in docs:
+            content = doc.page_content
+            # Strip out the date prefix if it exists
+            if ": " in content:
+                content = content.split(": ", 1)[1]
+            # Strip out edit marker and everything after if it exists
+            if " (Originally from " in content:
+                content = content.split(" (Originally from ")[0]
+            
+            if content.strip() == old_memory_text.strip():
+                matching_doc = doc
+                break
+                
+        if not matching_doc:
+            return f"Could not find exact memory to update: {old_memory_text}"
+        
+        old_doc = matching_doc
+        # Get the original timestamp, either from metadata or from the content
+        original_timestamp = old_doc.metadata.get('original_timestamp') or old_doc.metadata.get('timestamp')
+        doc_id = old_doc.metadata.get('id')
+        
+        if not doc_id:
+            return "Failed to update: Could not find document ID"
+
+        # Delete the old memory
+        recall_vector_store.delete([doc_id])
+        
+        # Create new memory with original timestamp plus current edit time
+        current_time = get_montreal_time()
+        edited_memory = f"{new_memory_text} (Originally from {original_timestamp}, Edited on {current_time['formatted']})"
+
+        new_memory_id = str(uuid.uuid4())
+        
+        # Create new document with updated content but preserve original metadata
+        new_doc = Document(
+            page_content=edited_memory,
+            id=new_memory_id,
+            metadata={
+                "id": new_memory_id,
+                "original_timestamp": original_timestamp,
+                "edit_timestamp": current_time['datetime'].isoformat(),
+                "day_of_week": current_time['day_of_week'],
+                "date": current_time['date'],
+                "time": current_time['time'],
+                "timezone": current_time['timezone'],
+                "is_edited": True
+            }
+        )
+        
+        # Add the updated memory and save
+        recall_vector_store.add_documents([new_doc])
+        recall_vector_store.save_local(PERSIST_DIRECTORY)
+        
+        return f"Successfully updated memory: {edited_memory}"
+        
+    except Exception as e:
+        return f"Error updating memory: {str(e)}"
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context

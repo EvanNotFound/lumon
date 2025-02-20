@@ -26,7 +26,7 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory
+from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
 from chat.think import think_before_action, reflect_on_action
 from datetime import datetime
 from chat.date import get_montreal_time
@@ -47,16 +47,22 @@ Current time context: {time_context}
 Utilize the available memory tools to store and retrieve important details that will help you better attend to the user's needs and understand their context. You can think to yourself using the think_before_action and reflect_on_action tools to carefully consider your actions and responses."""
 
 MEMORY_GUIDELINES = """Memory Usage Guidelines:
-1. Actively use memory tools (save_core_memory, save_recall_memory) to build a comprehensive understanding of the user.
+1. Actively use memory tools (save_recall_memory, update_recall_memory) to build and maintain a comprehensive understanding of the user.
 2. Make informed suppositions and extrapolations based on stored memories.
 3. Regularly reflect on past interactions to identify patterns and preferences.
 4. Update your mental model of the user with each new piece of information.
 5. Cross-reference new information with existing memories for consistency.
-6. Prioritize storing emotional context and personal values alongside facts.
-7. Use memory to anticipate needs and tailor responses to the user's style.
-8. Recognize and acknowledge changes in the user's situation or perspectives over time.
-9. Leverage memories to provide personalized examples and analogies.
-10. Recall past challenges or successes to inform current problem-solving."""
+6. When you find outdated or incorrect information in memories:
+   - Use update_recall_memory to correct the information
+   - Preserve the original timestamp while marking the edit
+7. Prioritize storing emotional context and personal values alongside facts.
+8. Use memory to anticipate needs and tailor responses to the user's style.
+9. Recognize and acknowledge changes in the user's situation or perspectives over time.
+10. Leverage memories to provide personalized examples and analogies.
+11. Pay attention to timestamps in memories to understand the chronological context.
+12. If some of the memories are obviously outdated and no longer relevant, please do not bring them up in the conversation when the user asks about future plans.
+13. If the user asks about future plans, please use the memories to provide personalized examples and analogies.
+14. If it is possible to concatenate memories, please do so to provide a more comprehensive and accurate understanding of the user's context. But be careful not to over do it, only concatenate memories if they are really obvious and relevant to each other."""
 
 THINKING_GUIDELINES = """Thinking Process Guidelines:
 1. Use think_before_action when:
@@ -116,7 +122,7 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
     
-tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_specific_memory, think_before_action, reflect_on_action]
+tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory, think_before_action, reflect_on_action]
 
 # Create the agent
 model = ChatOpenAI(model_name="gpt-4o-mini", api_key=OPENAI_API_KEY)

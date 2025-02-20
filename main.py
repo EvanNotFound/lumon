@@ -24,8 +24,7 @@ def main():
                 continue
                 
             try:
-                # NOTE: we're specifying `user_id` to save memories for a given user
-                config = {"configurable": {"user_id": "1", "thread_id": "1"}}
+                config = {"configurable": {"thread_id": "1"}}
 
                 for chunk in graph.stream({"messages": [("user", user_input)]}, config=config):
                     # print(chunk)
