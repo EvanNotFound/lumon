@@ -1,0 +1,18 @@
+from datetime import datetime
+import pytz
+
+def get_montreal_time():
+    """Get current time in Montreal with additional context."""
+    montreal_tz = pytz.timezone('America/Montreal')
+    current_time = datetime.now(montreal_tz)
+    
+    # Format with day name, date, time, and timezone
+    time_context = {
+        "datetime": current_time,
+        "formatted": current_time.strftime("%A, %B %d, %Y at %I:%M %p, Montreal (EDT/EST)"),
+        "day_of_week": current_time.strftime("%A"),
+        "date": current_time.strftime("%B %d, %Y"),
+        "time": current_time.strftime("%I:%M %p"),
+        "timezone": "Montreal (EDT/EST)"
+    }
+    return time_context

@@ -28,16 +28,23 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory
 from chat.think import think_before_action, reflect_on_action
+from datetime import datetime
+from chat.date import get_montreal_time
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
     recall_memories: List[str]
+    time_context: str  # Add this field to store time information
 
 recall_vector_store = InMemoryVectorStore(OpenAIEmbeddings())
 
 
 # Break down the prompt into logical sections for easier maintenance
-SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and thinking capabilities. Powered by a stateless LLM, you must rely on external memory to store information between conversations. Utilize the available memory tools to store and retrieve important details that will help you better attend to the user's needs and understand their context. You can think to yourself using the think_before_action and reflect_on_action tools to carefully consider your actions and responses."""
+SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and thinking capabilities. Powered by a stateless LLM, you must rely on external memory to store information between conversations. 
+
+Current time context: {time_context}
+
+Utilize the available memory tools to store and retrieve important details that will help you better attend to the user's needs and understand their context. You can think to yourself using the think_before_action and reflect_on_action tools to carefully consider your actions and responses."""
 
 MEMORY_GUIDELINES = """Memory Usage Guidelines:
 1. Actively use memory tools (save_core_memory, save_recall_memory) to build a comprehensive understanding of the user.
@@ -130,14 +137,19 @@ def agent(state: State) -> State:
     recall_str = (
         "<recall_memory>\n" + "\n".join(state["recall_memories"]) + "\n</recall_memory>"
     )
+
+    time_context = state["time_context"]
+    
     prediction = bound.invoke(
         {
             "messages": state["messages"],
             "recall_memories": recall_str,
+            "time_context": time_context,  # Pass the time context
         }
     )
     return {
         "messages": [prediction],
+        "time_context": state["time_context"],  # Preserve the time context
     }
 
 def load_memories(state: State, config: RunnableConfig) -> State:
@@ -153,8 +165,11 @@ def load_memories(state: State, config: RunnableConfig) -> State:
     convo_str = get_buffer_string(state["messages"])
     convo_str = tokenizer.decode(tokenizer.encode(convo_str)[:2048])
     recall_memories = search_recall_memories.invoke(convo_str, config)
+    time_context = get_montreal_time().get("formatted")  # Get the current time
+    
     return {
         "recall_memories": recall_memories,
+        "time_context": time_context,  # Store the full time context
     }
 
 def route_tools(state: State):

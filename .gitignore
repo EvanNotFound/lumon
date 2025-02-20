@@ -172,3 +172,5 @@ cython_debug/
 
 # Memory store
 data/memory_store
+
+.DS_Store
