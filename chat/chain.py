@@ -26,7 +26,7 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from chat.memory import save_recall_memory, search_recall_memories, delete_recall_memory
+from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
@@ -66,6 +66,14 @@ prompt = ChatPromptTemplate.from_messages(
             " analogies.\n"
             "10. Recall past challenges or successes to inform current"
             " problem-solving.\n\n"
+            "Memory Deletion Process:\n"
+            "When you need to delete memories:\n"
+            "1. First use search_recall_memories to find relevant memories\n"
+            "2. Review the results and identify which specific memories to delete\n"
+            "3. Use delete_specific_memory with either:\n"
+            "   - A single memory text as a string\n"
+            "   - An array of memory texts to delete multiple at once\n"
+            "   Example: delete_specific_memory(['memory1', 'memory2'])\n\n"
             "## Recall Memories\n"
             "Recall memories are contextually retrieved based on the current"
             " conversation:\n{recall_memories}\n\n"
@@ -79,14 +87,15 @@ prompt = ChatPromptTemplate.from_messages(
             " information you want to retain in the next conversation. If you"
             " do call tools, all text preceding the tool call is an internal"
             " message. Respond AFTER calling the tool, once you have"
-            " confirmation that the tool completed successfully.\n\n",
+            " confirmation that the tool completed successfully.\n\n"
+            "When you need to delete memories, ensure you delete **all** relevant memories based on the user's request.\n\n",
         ),
         ("placeholder", "{messages}"),
     ]
 )
 
     
-tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_recall_memory]
+tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_specific_memory]
 
 # Create the agent
 model = ChatOpenAI(model_name="gpt-4o-mini", api_key=OPENAI_API_KEY)

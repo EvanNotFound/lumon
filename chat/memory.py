@@ -76,25 +76,46 @@ def search_recall_memories(query: str, config: RunnableConfig) -> List[str]:
     return [document.page_content for document in documents]
 
 @tool
-def delete_recall_memory(query: str, config: RunnableConfig) -> str:
-    """Delete a memory from the vector store."""
-    # Find relevant memories
-    similar_docs = recall_vector_store.similarity_search(query, k=1)
-    if not similar_docs:
-        return "No matching memory found to delete."
+def delete_specific_memory(memory_texts: str | list[str], config: RunnableConfig) -> str:
+    """Delete one or more memories based on their exact text content.
+    Args:
+        memory_texts: Single memory text or list of memory texts to delete
+    Returns:
+        String describing the results of deletion attempts
+    """
+    if isinstance(memory_texts, str):
+        memory_texts = [memory_texts]
     
-    # Get the document ID of the most similar memory
-    doc_id = similar_docs[0].metadata.get('id') or similar_docs[0].id
+    results = []
+    deleted_count = 0
     
-    if not doc_id:
-        return "Could not find document ID for deletion."
-
     try:
-        recall_vector_store.delete([doc_id])
-        recall_vector_store.save_local(PERSIST_DIRECTORY)
-        return f"Memory deleted successfully: {similar_docs[0].page_content}"
+        for memory_text in memory_texts:
+            docs = recall_vector_store.similarity_search(memory_text, k=1)
+            if not docs or docs[0].page_content != memory_text:
+                results.append(f"Could not find exact memory: {memory_text}")
+                continue
+            
+            doc = docs[0]
+            doc_id = doc.metadata.get('id') or doc.id
+            if not doc_id:
+                results.append(f"Failed to delete (no ID): {memory_text}")
+                continue
+
+            recall_vector_store.delete([doc_id])
+            deleted_count += 1
+            results.append(f"Successfully deleted: {memory_text}")
+        
+        # Only save if we actually deleted something
+        if deleted_count > 0:
+            recall_vector_store.save_local(PERSIST_DIRECTORY)
+            
+        return "\n".join(results)
+        
     except Exception as e:
-        return f"Error deleting memory: {str(e)}"
+        error_msg = f"Error during memory deletion: {str(e)}"
+        results.append(error_msg)
+        return "\n".join(results)
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
