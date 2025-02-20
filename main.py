@@ -31,13 +31,22 @@ def main():
                 # print(f"\nJ.A.R.V.I.S.: {response['output']}")
                 
             except Exception as e:
-                print(f"\nOops! Something went wrong: {str(e)}")
-                print("Please try again!")
+                import traceback
+                print("\nError occurred while processing your request:")
+                print(f"Type: {type(e).__name__}")
+                print(f"Details: {str(e)}")
+                print("\nTraceback:")
+                print(''.join(traceback.format_tb(e.__traceback__)))
+                print("If this issue persists, please contact support.")
                 
     except KeyboardInterrupt:
         print("\n\nGoodbye! Have a great day!")
     except Exception as e:
-        print(f"\nFatal error: {str(e)}")
+        print("\nA critical error occurred:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Details: {str(e)}")
+        print("\nTraceback:")
+        print(''.join(traceback.format_tb(e.__traceback__)))
         return 1
         
     return 0

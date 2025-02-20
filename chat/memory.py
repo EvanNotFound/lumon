@@ -1,4 +1,5 @@
 import json
+import os
 from typing import List, Literal, Optional
 
 import tiktoken
@@ -15,8 +16,36 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+from langchain.storage import LocalFileStore
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
 
-recall_vector_store = InMemoryVectorStore(OpenAIEmbeddings())
+PERSIST_DIRECTORY = "data/memory_store"
+
+store = LocalFileStore(PERSIST_DIRECTORY)
+embeddings = OpenAIEmbeddings()
+
+os.makedirs(PERSIST_DIRECTORY, exist_ok=True)
+
+# Initialize an empty vector store only if it doesn't exist
+try:
+    recall_vector_store = FAISS.load_local(
+        PERSIST_DIRECTORY,
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+except Exception as e:
+    print(f"No vector store found, creating a new one......")
+    # Initialize empty vector store if none exists
+    initial_memory = "You are a helpful assistant that can answer questions and help with tasks."
+    initial_document = Document(page_content=initial_memory)
+
+    recall_vector_store = FAISS.from_documents(
+        documents=[initial_document],
+        embedding=embeddings
+    )
+    recall_vector_store.save_local(PERSIST_DIRECTORY)
+    print(f"New vector store created at {PERSIST_DIRECTORY}")
 
 import uuid
 
@@ -32,25 +61,18 @@ def get_user_id(config: RunnableConfig) -> str:
 @tool
 def save_recall_memory(memory: str, config: RunnableConfig) -> str:
     """Save memory to vectorstore for later semantic retrieval."""
-    user_id = get_user_id(config)
     document = Document(
-        page_content=memory, id=str(uuid.uuid4()), metadata={"user_id": user_id}
+        page_content=memory,
+        id=str(uuid.uuid4())
     )
     recall_vector_store.add_documents([document])
+    recall_vector_store.save_local(PERSIST_DIRECTORY)
     return memory
-
 
 @tool
 def search_recall_memories(query: str, config: RunnableConfig) -> List[str]:
     """Search for relevant memories."""
-    user_id = get_user_id(config)
-
-    def _filter_function(doc: Document) -> bool:
-        return doc.metadata.get("user_id") == user_id
-
-    documents = recall_vector_store.similarity_search(
-        query, k=3, filter=_filter_function
-    )
+    documents = recall_vector_store.similarity_search(query, k=5)
     return [document.page_content for document in documents]
 
 class State(MessagesState):
