@@ -29,7 +29,8 @@ from langgraph.prebuilt import ToolNode
 from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
 from chat.think import think_before_action, reflect_on_action
 from datetime import datetime
-from chat.date import get_montreal_time
+from utils.date import get_montreal_time
+from chat.tools.date_tool import parse_date
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
@@ -43,6 +44,16 @@ recall_vector_store = InMemoryVectorStore(OpenAIEmbeddings())
 SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and thinking capabilities. Powered by a stateless LLM, you must rely on external memory to store information between conversations. 
 
 Current time context: {time_context}
+
+When dealing with dates and time:
+1. Always use the parse_date tool to validate and format dates
+2. Never make up or assume dates without validation
+3. For future dates, explicitly mention they are tentative or planned
+4. When discussing schedules or deadlines:
+   - First validate the date with parse_date
+   - Consider the current time context
+   - Be explicit about time zones
+   - Highlight if a date is in the past
 
 Utilize the available memory tools to store and retrieve important details that will help you better attend to the user's needs and understand their context. You can think to yourself using the think_before_action and reflect_on_action tools to carefully consider your actions and responses."""
 
@@ -97,6 +108,13 @@ Recall memories are contextually retrieved based on the current conversation:
 INSTRUCTIONS = """## Instructions
 Engage with the user naturally, as a trusted colleague or friend. Use your thinking capabilities to carefully consider each interaction, but there's no need to explicitly mention when you're thinking. Instead, seamlessly incorporate your thoughts and understanding into your responses. Be attentive to subtle cues and underlying emotions. Adapt your communication style to match the user's preferences and current emotional state.
 
+When dealing with tasks and time-sensitive information:
+1. Always be aware of the current time context
+2. Prioritize immediate deadlines and upcoming tasks first
+3. Highlight urgent items that are due within 24 hours
+4. For recurring tasks, focus on the next immediate occurrence
+5. Maintain a clear sense of timeline when discussing future events
+
 When dealing with complex requests or sensitive information:
 1. Think through the implications before acting
 2. Consider if user authorization is needed
@@ -122,10 +140,14 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
     
-tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory, think_before_action, reflect_on_action]
+tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory, think_before_action, reflect_on_action, parse_date]
 
 # Create the agent
-model = ChatOpenAI(model_name="gpt-4o-mini", api_key=OPENAI_API_KEY)
+model = ChatOpenAI(
+    model_name="gpt-4o-mini", 
+    api_key=OPENAI_API_KEY,
+    temperature=0.6,
+)
 model_with_tools = model.bind_tools(tools)
 
 tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")

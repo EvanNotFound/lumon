@@ -1,6 +1,7 @@
 import json
 import os
 from typing import List, Literal, Optional
+from datetime import datetime
 
 import tiktoken
 from langchain_community.tools.tavily_search import TavilySearchResults
@@ -19,7 +20,7 @@ from langgraph.prebuilt import ToolNode
 from langchain.storage import LocalFileStore
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
-from chat.date import get_montreal_time
+from utils.date import get_montreal_time
 
 PERSIST_DIRECTORY = "data/memory_store"
 
@@ -177,8 +178,11 @@ def update_recall_memory(old_memory_text: str, new_memory_text: str, config: Run
             return f"Could not find exact memory to update: {old_memory_text}"
         
         old_doc = matching_doc
-        # Get the original timestamp, either from metadata or from the content
+        # Get the original timestamp and convert it from ISO format to datetime
         original_timestamp = old_doc.metadata.get('original_timestamp') or old_doc.metadata.get('timestamp')
+        if original_timestamp:
+            original_timestamp = datetime.fromisoformat(original_timestamp)
+        
         doc_id = old_doc.metadata.get('id')
         
         if not doc_id:
@@ -189,7 +193,8 @@ def update_recall_memory(old_memory_text: str, new_memory_text: str, config: Run
         
         # Create new memory with original timestamp plus current edit time
         current_time = get_montreal_time()
-        edited_memory = f"{new_memory_text} (Originally from {original_timestamp}, Edited on {current_time['formatted']})"
+        formatted_original_timestamp = get_montreal_time(original_timestamp).get('formatted')
+        edited_memory = f"{new_memory_text} (Originally from {formatted_original_timestamp}, Edited on {current_time['formatted']})"
 
         new_memory_id = str(uuid.uuid4())
         

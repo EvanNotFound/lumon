@@ -17,7 +17,7 @@ def pretty_print_stream_chunk(chunk, production=False):
         for node, updates in chunk.items():
             if "messages" in updates:
                 message = updates["messages"][-1]
-                if hasattr(message, 'content'):
+                if hasattr(message, 'content') and message.content.strip():  # Only print if content exists and isn't empty
                     # Format AI responses in a nice panel
                     md = Markdown(message.content)
                     console.print(Panel(
@@ -26,14 +26,6 @@ def pretty_print_stream_chunk(chunk, production=False):
                         border_style="cyan",
                         padding=(1, 2)
                     ))
-            # else:
-            #     # For other updates, print in a simple panel
-            #     console.print(Panel(
-            #         str(updates),
-            #         title=f"Update from {node}",
-            #         border_style="blue",
-            #         padding=(1, 2)
-            #     ))
     else:
         # Debug formatting - original implementation
         for node, updates in chunk.items():
