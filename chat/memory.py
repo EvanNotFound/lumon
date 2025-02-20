@@ -75,6 +75,27 @@ def search_recall_memories(query: str, config: RunnableConfig) -> List[str]:
     documents = recall_vector_store.similarity_search(query, k=5)
     return [document.page_content for document in documents]
 
+@tool
+def delete_recall_memory(query: str, config: RunnableConfig) -> str:
+    """Delete a memory from the vector store."""
+    # Find relevant memories
+    similar_docs = recall_vector_store.similarity_search(query, k=1)
+    if not similar_docs:
+        return "No matching memory found to delete."
+    
+    # Get the document ID of the most similar memory
+    doc_id = similar_docs[0].metadata.get('id') or similar_docs[0].id
+    
+    if not doc_id:
+        return "Could not find document ID for deletion."
+
+    try:
+        recall_vector_store.delete([doc_id])
+        recall_vector_store.save_local(PERSIST_DIRECTORY)
+        return f"Memory deleted successfully: {similar_docs[0].page_content}"
+    except Exception as e:
+        return f"Error deleting memory: {str(e)}"
+
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
     recall_memories: List[str]

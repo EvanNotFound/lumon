@@ -26,8 +26,7 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-
-from chat.memory import save_recall_memory, search_recall_memories
+from chat.memory import save_recall_memory, search_recall_memories, delete_recall_memory
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
@@ -87,7 +86,7 @@ prompt = ChatPromptTemplate.from_messages(
 )
 
     
-tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories]
+tools = [add, multiply, search_tavily, save_recall_memory, search_recall_memories, delete_recall_memory]
 
 # Create the agent
 model = ChatOpenAI(model_name="gpt-4o-mini", api_key=OPENAI_API_KEY)
@@ -134,7 +133,6 @@ def load_memories(state: State, config: RunnableConfig) -> State:
     return {
         "recall_memories": recall_memories,
     }
-
 
 def route_tools(state: State):
     """Determine whether to use tools or end the conversation based on the last message.
