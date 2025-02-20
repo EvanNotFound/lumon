@@ -19,6 +19,7 @@ from langgraph.prebuilt import ToolNode
 from langchain.storage import LocalFileStore
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
+from chat.date import get_montreal_time
 
 PERSIST_DIRECTORY = "data/memory_store"
 
@@ -61,18 +62,30 @@ def get_user_id(config: RunnableConfig) -> str:
 @tool
 def save_recall_memory(memory: str, config: RunnableConfig) -> str:
     """Save memory to vectorstore for later semantic retrieval."""
+    time_context = get_montreal_time()
+    
+    # Include the full formatted date in the memory content
+    memory_with_date = f"On {time_context['formatted']}: {memory}"
+    
     document = Document(
-        page_content=memory,
-        id=str(uuid.uuid4())
+        page_content=memory_with_date,
+        metadata={
+            "id": str(uuid.uuid4()),
+            "timestamp": time_context['datetime'].isoformat(),
+            "day_of_week": time_context['day_of_week'],
+            "date": time_context['date'],
+            "time": time_context['time'],
+            "timezone": time_context['timezone']
+        }
     )
     recall_vector_store.add_documents([document])
     recall_vector_store.save_local(PERSIST_DIRECTORY)
-    return memory
+    return memory_with_date
 
 @tool
 def search_recall_memories(query: str, config: RunnableConfig) -> List[str]:
     """Search for relevant memories."""
-    documents = recall_vector_store.similarity_search(query, k=5)
+    documents = recall_vector_store.similarity_search(query, k=10)
     return [document.page_content for document in documents]
 
 @tool
