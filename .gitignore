@@ -170,7 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Memory store
-data/memory_store
+# Storage
+data
 
 .DS_Store

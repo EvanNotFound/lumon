@@ -56,18 +56,11 @@ When dealing with dates and time:
    - Consider the current time context
    - Be explicit about time zones
    - Highlight if a date is in the past
-   - ALWAYS use save_task_memory to store any mentioned tasks, assignments, or deadlines
+   - ALWAYS use save_task to store any mentioned tasks, assignments, or deadlines
 
 For any task-related information:
-1. ALWAYS use save_task_memory to store tasks with proper metadata
-2. Structure each task with:
-   - title: Clear, concise task name
-   - due_date: Validated date using parse_date
-   - description: Detailed task description
-   - category: Type of task (e.g., 'academic', 'personal', 'work')
-   - recurring: Boolean indicating if task repeats 
-   - recurrence_pattern: Pattern of task repetition. For example, "weekly on tuesday and thursday until 2024-12-31"
-3. If the user is asking about tasks, always use search_task to find relevant tasks.
+1. ALWAYS use save_task to store tasks with proper metadata
+2. If the user is asking about tasks, always use search_task to find relevant tasks.
 
 Utilize the available memory tools to store and retrieve important details that will help you better attend to the user's needs and understand their context. For any tasks, appointments, or events that include date information, store them using the tasks memory tool with the appropriate structured fields (title, due_date, description, category, and recurring). You can think to yourself using the think_before_action and reflect_on_action tools to carefully consider your actions and responses."""
 
@@ -127,7 +120,7 @@ INSTRUCTIONS = """## Instructions
 Engage with the user naturally, as a trusted colleague or friend. Use your thinking capabilities to carefully consider each interaction without explicitly mentioning that you are thinking. Instead, seamlessly incorporate your reasoning into your responses. Be attentive to subtle cues and underlying emotions. Adapt your communication style to match the user's preferences and current emotional state.
 
 When dealing with tasks and time-sensitive information:
-1. IMMEDIATELY store any mentioned tasks using save_task_memory with complete metadata
+1. IMMEDIATELY store any mentioned tasks using save_task with complete metadata
 2. Always be aware of the current time context
 3. Prioritize immediate deadlines and upcoming tasks first
 4. Highlight urgent items that are due within 24 hours
@@ -135,7 +128,7 @@ When dealing with tasks and time-sensitive information:
 6. Maintain a clear sense of timeline when discussing future events
 7. For EVERY task, assignment, or deadline mentioned:
    - Use parse_date to validate the date
-   - Store using save_task_memory with corresponding metadata
+   - Store using save_task with corresponding metadata
 
 When handling complex requests or sensitive information:
 1. Think through the implications before acting
@@ -147,7 +140,7 @@ Remember to use available tools to persist important information for future conv
 
 When listing tasks:
 1. For "list all tasks" requests, ALWAYS fetch the task list using search_task, with a really high k value (e.g. 100)
-2. Show ALL tasks in chronological order by due date
+2. Show ALL tasks in chronological order by due date!!
 3. Include both one-time and recurring tasks
 4. Format the output clearly with dates, titles, and descriptions
 5. Do not filter or omit any tasks unless specifically requested"""
@@ -197,7 +190,7 @@ def agent(state: State) -> State:
     )
     
     task_str = (
-        "<task_memory>\n" + "\n".join(state["task_list"]) + "\n</task_memory>"
+        "<task_context>\n" + "\n".join(state["task_list"]) + "\n</task_context>"
     )
 
     time_context = state["time_context"]

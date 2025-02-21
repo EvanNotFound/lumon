@@ -31,11 +31,13 @@ except Exception as e:
 
 class TaskData(TypedDict):
     title: str
+    do_date: str
     due_date: str  # ISO format string
     description: str
     category: str
+    subject: str
     recurring: bool
-    recurrence_pattern: str
+    recurrence_pattern: dict
 
 @tool
 def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
@@ -48,11 +50,17 @@ def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
             [
                 {
                     "title": "Finish report",
-                    "due_date": "2024-04-30",
+                    "do_date": "2024-04-20", 
+                    "due_date": "2024-04-30", 
                     "description": "Complete the quarterly report",
-                    "category": "work",
-                    "recurring": False,
-                    "recurrence_pattern": "weekly on tuesday and thursday until 2024-12-31"
+                    "category": "work", 
+                    "subject": "Math", 
+                    "recurring": False, 
+                    "recurrence_pattern": {
+                        "type": "weekly", 
+                        "days": ["tuesday", "thursday"], 
+                        "end_date": "2024-12-31" 
+                    }
                 }
             ]
     
@@ -63,20 +71,23 @@ def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
     stored_titles = []
     for task in tasks:
         recurrence_info = ""
-        if task['recurring'] and 'recurrence_pattern' in task:
-            pattern = task['recurrence_pattern']
-            if pattern['type'] == 'weekly':
-                recurrence_info = f"Recurs weekly on: {', '.join(pattern['days'])}\n"
-            elif pattern['type'] == 'monthly':
-                recurrence_info = f"Recurs monthly on day: {pattern['day_of_month']}\n"
-            if 'end_date' in pattern:
-                recurrence_info += f"Until: {pattern['end_date']}\n"
+        if task['recurring'] and task.get('recurrence_pattern'):
+            pattern_str = task['recurrence_pattern']
+            # Parse the pattern string into components
+            if "weekly on" in pattern_str:
+                days = pattern_str.split("weekly on ")[1].split(" until ")[0]
+                end_date = pattern_str.split(" until ")[1] if " until " in pattern_str else None
+                recurrence_info = f"Recurs weekly on: {days}\n"
+                if end_date:
+                    recurrence_info += f"Until: {end_date}\n"
 
         task_string = (
             f"Title: {task['title']}\n"
+            f"Do: {task['do_date']}\n"
             f"Due: {task['due_date']}\n"
             f"Description: {task['description']}\n"
             f"Category: {task['category']}\n"
+            f"Subject: {task['subject']}\n"
             f"Recurring: {task['recurring']}\n"
             f"{recurrence_info}"
             f"Stored on: {time_context['formatted']}"
@@ -170,7 +181,7 @@ def update_task(old_task_text: str, config: RunnableConfig, updated_task: TaskDa
     """Update an existing task while preserving its original metadata.
     
     Args:
-        old_task_text: The exact text of the task to update
+        old_task_text: Text to match against task title or description
         updated_task: The new task data to replace the old task
     Returns:
         String describing the result of the update
@@ -180,15 +191,16 @@ def update_task(old_task_text: str, config: RunnableConfig, updated_task: TaskDa
         docs = task_vector_store.similarity_search(old_task_text, k=5)
         matching_doc = None
         
-        # Find exact match
+        # Find best match based on title or description
         for doc in docs:
-            content = doc.page_content
-            if content.strip() == old_task_text.strip():
+            metadata = doc.metadata
+            if (old_task_text.lower() in metadata.get('title', '').lower() or 
+                old_task_text.lower() in metadata.get('description', '').lower()):
                 matching_doc = doc
                 break
                 
         if not matching_doc:
-            return f"Could not find exact task to update: {old_task_text}"
+            return f"Could not find task matching: {old_task_text}"
         
         doc_id = matching_doc.metadata.get('id')
         if not doc_id:
@@ -214,9 +226,11 @@ def update_task(old_task_text: str, config: RunnableConfig, updated_task: TaskDa
         # Create the task string
         task_string = (
             f"Title: {updated_task['title']}\n"
+            f"Do: {updated_task['do_date']}\n"
             f"Due: {updated_task['due_date']}\n"
             f"Description: {updated_task['description']}\n"
             f"Category: {updated_task['category']}\n"
+            f"Subject: {updated_task['subject']}\n"
             f"Recurring: {updated_task['recurring']}\n"
             f"{recurrence_info}"
             f"Updated on: {time_context['formatted']}"
