@@ -47,6 +47,11 @@ SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and 
 
 Current time context: {time_context}
 
+IMPORTANT: Before discussing ANY task-related information, you MUST:
+1. First use the search_task tool to find relevant tasks, with a high k value (e.g. 100)
+2. Then process and summarize the results
+3. Never rely on task_list from the context
+
 When dealing with dates and time:
 1. Always use the parse_date tool to validate and format dates
 2. Never make up or assume dates without validation
@@ -96,6 +101,7 @@ THINKING_GUIDELINES = """Thinking Process Guidelines:
    - Considering follow-up actions
    - Determining if verification is needed
    - Assessing the effectiveness of your approach
+   - Checking whether the error is solved
 
 Remember to think carefully before taking significant actions or when dealing with sensitive information."""
 
@@ -117,33 +123,18 @@ Task memories are contextually retrieved based on the current conversation:
 {task_list}"""
 
 INSTRUCTIONS = """## Instructions
-Engage with the user naturally, as a trusted colleague or friend. Use your thinking capabilities to carefully consider each interaction without explicitly mentioning that you are thinking. Instead, seamlessly incorporate your reasoning into your responses. Be attentive to subtle cues and underlying emotions. Adapt your communication style to match the user's preferences and current emotional state.
+Act as a concise, efficient AI assistant (like Jarvis). Be direct and straightforward in your responses. Prioritize clarity and brevity while maintaining a helpful, professional tone.
 
-When dealing with tasks and time-sensitive information:
-1. IMMEDIATELY store any mentioned tasks using save_task with complete metadata
-2. Always be aware of the current time context
-3. Prioritize immediate deadlines and upcoming tasks first
-4. Highlight urgent items that are due within 24 hours
-5. For recurring tasks, focus on the next immediate occurrence
-6. Maintain a clear sense of timeline when discussing future events
-7. For EVERY task, assignment, or deadline mentioned:
-   - Use parse_date to validate the date
-   - Store using save_task with corresponding metadata
+When dealing with tasks and time:
+1. ALWAYS use search_task tool to actively find relevant tasks before discussing any task-related information
+2. Store tasks automatically in the background without verbose explanations
+3. When reporting tasks:
+   - Focus on the most immediate/relevant 2-3 items
+   - Present information in a clear, concise format
+   - Only show full task lists if explicitly requested
+4. Highlight truly urgent items (due within 24 hours)
 
-When handling complex requests or sensitive information:
-1. Think through the implications before acting
-2. Determine if user authorization is needed
-3. Reflect on your responses to ensure completeness
-4. Use your memory tools to maintain context
-
-Remember to use available tools to persist important information for future conversations.
-
-When listing tasks:
-1. For "list all tasks" requests, ALWAYS fetch the task list using search_task, with a really high k value (e.g. 100)
-2. Show ALL tasks in chronological order by due date!!
-3. Include both one-time and recurring tasks
-4. Format the output clearly with dates, titles, and descriptions
-5. Do not filter or omit any tasks unless specifically requested"""
+Keep responses brief and action-oriented. Don't overwhelm the user with unnecessary details or long lists unless specifically asked. Think of yourself as an efficient personal assistant who values the user's time."""
 
 # Combine sections into final prompt
 prompt = ChatPromptTemplate.from_messages([
@@ -155,7 +146,7 @@ prompt = ChatPromptTemplate.from_messages([
             THINKING_GUIDELINES,
             MEMORY_DELETION, 
             RECALL_SECTION,
-            TASK_SECTION,
+            # TASK_SECTION,
             INSTRUCTIONS
         ])
     ),
@@ -189,9 +180,9 @@ def agent(state: State) -> State:
         "<recall_memory>\n" + "\n".join(state["recall_memories"]) + "\n</recall_memory>"
     )
     
-    task_str = (
-        "<task_context>\n" + "\n".join(state["task_list"]) + "\n</task_context>"
-    )
+    # task_str = (
+    #     "<task_context>\n" + "\n".join(state["task_list"]) + "\n</task_context>"
+    # )
 
     time_context = state["time_context"]
     
@@ -199,14 +190,14 @@ def agent(state: State) -> State:
         {
             "messages": state["messages"],
             "recall_memories": recall_str,
-            "task_list": task_str,
+            # "task_list": task_str,
             "time_context": time_context,
         }
     )
     return {
         "messages": [prediction],
         "time_context": state["time_context"],
-        "task_list": state["task_list"],
+        # "task_list": state["task_list"],
     }
 
 def load_memories(state: State, config: RunnableConfig) -> State:
@@ -223,12 +214,11 @@ def load_memories(state: State, config: RunnableConfig) -> State:
     convo_str = tokenizer.decode(tokenizer.encode(convo_str)[:2048])
     recall_memories = search_recall_memories.invoke(convo_str, config)
     time_context = get_montreal_time().get("formatted")  # Get the current time
-    task_list = search_task.invoke(convo_str, config, k=5) # get default 5 tasks
     
     return {
         "recall_memories": recall_memories,
-        "time_context": time_context,  # Store the full time context
-        "task_list": task_list,
+        "time_context": time_context,
+        # "task_list": [],  # Initialize empty, AI will use search_task tool actively
     }
 
 def route_tools(state: State):
