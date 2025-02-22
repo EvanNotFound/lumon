@@ -20,16 +20,23 @@ def parse_date(date_input: Optional[Union[str, datetime]] = None) -> dict:
     Returns:
         Dictionary containing formatted date information
     """
+    montreal_tz = pytz.timezone('America/Montreal')
+    
     try:
         if date_input is None:
             return get_montreal_time()
             
         if isinstance(date_input, datetime):
+            # Assume naive datetimes are in Montreal time
+            if date_input.tzinfo is None:
+                date_input = montreal_tz.localize(date_input)
             return get_montreal_time(date_input)
             
         if isinstance(date_input, str):
-            # Try to parse the string into a datetime object
+            # Parse the string and assume Montreal timezone if none provided
             parsed_date = parser.parse(date_input)
+            if parsed_date.tzinfo is None:
+                parsed_date = montreal_tz.localize(parsed_date)
             return get_montreal_time(parsed_date)
             
     except (ValueError, TypeError) as e:

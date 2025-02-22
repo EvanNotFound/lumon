@@ -50,12 +50,12 @@ def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
             [
                 {
                     "title": "Finish report",
-                    "do_date": "2024-04-20", 
-                    "due_date": "2024-04-30", 
+                    "do_date": "2024-04-20 Sunday", 
+                    "due_date": "2024-04-30 Wednesday", 
                     "description": "Complete the quarterly report",
                     "category": "work", 
                     "subject": "Math", 
-                    "recurring": False, 
+                    "recurring": True, 
                     "recurrence_pattern": {
                         "type": "weekly", 
                         "days": ["tuesday", "thursday"], 
