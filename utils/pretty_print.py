@@ -17,8 +17,11 @@ def pretty_print_stream_chunk(chunk, production=False):
         for node, updates in chunk.items():
             if "messages" in updates:
                 message = updates["messages"][-1]
-                if hasattr(message, 'content') and message.content.strip():  # Only print if content exists and isn't empty
-                    # Format AI responses in a nice panel
+                # Only print if content exists, isn't empty, and isn't a list/dict/string representation of list
+                if (hasattr(message, 'content') and 
+                    message.content.strip() and 
+                    not isinstance(message.content, (list, dict)) and
+                    not (isinstance(message.content, str) and message.content.startswith('['))):
                     md = Markdown(message.content)
                     console.print(Panel(
                         md,
