@@ -1,11 +1,13 @@
 # main.py
 import sys
 import click
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from chat.chain import graph
 from utils.pretty_print import pretty_print_stream_chunk
 from rich.console import Console
 from rich.panel import Panel
+from chat.memory import search_recall_memories
+from chat.orchestra_chain import process_message
 
 console = Console()
 
@@ -47,9 +49,25 @@ def main(prod):
                 continue
                 
             try:
-                config = {"configurable": {"thread_id": "1"}}
-                for chunk in graph.stream({"messages": [("user", user_input)]}, config=config):
-                    pretty_print_stream_chunk(chunk, production=prod)
+                # Load memories
+                recall_memories = search_recall_memories(user_input)
+                memory_context = {
+                    "recall_memories": recall_memories
+                }
+                
+                # Process message
+                response = process_message(user_input, memory_context)
+                
+                # Print response
+                if prod:
+                    console.print(Panel(
+                        response,
+                        title="J.A.R.V.I.S.",
+                        border_style="cyan",
+                        padding=(1, 2)
+                    ))
+                else:
+                    print("\nJ.A.R.V.I.S.:", response)
                 
             except Exception as e:
                 import traceback
