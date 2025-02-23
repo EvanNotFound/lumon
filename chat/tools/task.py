@@ -31,6 +31,7 @@ except Exception as e:
 
 class TaskData(TypedDict):
     title: str
+    completed: bool
     do_date: str
     due_date: str  # ISO format string
     description: str
@@ -50,6 +51,7 @@ def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
             [
                 {
                     "title": "Finish report",
+                    "completed": False,
                     "do_date": "2024-04-20 Sunday", 
                     "due_date": "2024-04-30 Wednesday", 
                     "description": "Complete the quarterly report",
@@ -85,6 +87,7 @@ def save_task(tasks: List[TaskData], config: RunnableConfig) -> str:
             f"Title: {task['title']}\n"
             f"Do: {task['do_date']}\n"
             f"Due: {task['due_date']}\n"
+            f"Completed: {task['completed']}\n"
             f"Description: {task['description']}\n"
             f"Category: {task['category']}\n"
             f"Subject: {task['subject']}\n"
@@ -228,6 +231,7 @@ def update_task(old_task_text: str, config: RunnableConfig, updated_task: TaskDa
             f"Title: {updated_task['title']}\n"
             f"Do: {updated_task['do_date']}\n"
             f"Due: {updated_task['due_date']}\n"
+            f"Completed: {updated_task['completed']}\n"
             f"Description: {updated_task['description']}\n"
             f"Category: {updated_task['category']}\n"
             f"Subject: {updated_task['subject']}\n"
