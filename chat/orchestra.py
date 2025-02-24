@@ -2,12 +2,21 @@ from mainframe_orchestra import Task, Agent, OpenaiModels, Conduct
 from chat.agents.web_research import web_research_agent
 from chat.agents.memory_management import memory_management_agent
 from chat.agents.task_management import task_management_agent
+from utils.date import get_montreal_time
 
 lumon_agent = Agent(
     agent_id="lumon_agent",
     role="Conductor",
     goal="To chat with and help the human user by coordinating your team of agents to carry out tasks.",
-    attributes="You know that you can delegate tasks to your team of agents, and you can take outputs of agents and use them for subsequent tasks if needed. Your team includes a web research agent, a memory management agent, and a task management agent.",
+    attributes="""You know that you must use the conduct_tool to delegate tasks to your team of agents. 
+    The conduct_tool accepts an array of tasks, where each task has:
+    - task_id: a unique identifier for the task
+    - agent_id: the agent to execute the task (web_research_agent, memory_management_agent, or task_management_agent)
+    - instruction: what you want the agent to do
+    
+    Example usage:
+    {"tasks": [{"task_id": "search_tasks", "agent_id": "task_management_agent", "instruction": "Search for all tasks"}]}
+    """,
     llm=OpenaiModels.gpt_4o_mini,  # Or your preferred model
     temperature=0.7,
     tools=[
@@ -16,11 +25,20 @@ lumon_agent = Agent(
 )
 
 def create_lumon_task(user_input: str, conversation_history: list):
+    time_context = get_montreal_time()
     
     # Simplified system prompt
     context = f"""
 You are L.U.M.O.N., an AI assistant focused on being helpful and efficient in your responses.
 Keep your responses clear and concise while maintaining a professional tone.
+
+Current time in Montreal: {time_context["formatted"]}
+
+IMPORTANT RESPONSE GUIDELINES:
+- Never narrate your actions in brackets (e.g., don't say "[Using memory_management_agent...]")
+- Don't announce when you're about to use tools
+- Just use the tools directly and incorporate their results into your response
+- Keep responses natural and conversational
 
 IMPORTANT: Before ANY response that involves tasks or time-related information, you MUST:
 1. ALWAYS use task_management_agent first to find relevant tasks

@@ -5,46 +5,43 @@ import os
 from datetime import datetime
 import uuid
 from typing import Union, List, Dict
-from utils.logger import setup_logger
+from utils.logger import logger
 
 class MemoryTools:
     # Make these class variables instead of instance variables
     persist_directory = "data/memory_lumon"
     vector_store = None
     
-    # Use the new logger utility
-    logger = setup_logger(__name__)
-    
     @classmethod
     def _initialize_store(cls) -> FAISS:
         """Helper method to initialize or load the vector store. Not for LLMs."""
-        cls.logger.debug("Starting vector store initialization")
+        logger.debug("Starting vector store initialization")
         os.makedirs(cls.persist_directory, exist_ok=True)
         embeddings = OpenAIEmbeddings()
         try:
-            cls.logger.debug(f"Attempting to load existing vector store from {cls.persist_directory}")
+            logger.debug(f"Attempting to load existing vector store from {cls.persist_directory}")
             store = FAISS.load_local(
                 cls.persist_directory,
                 embeddings,
                 allow_dangerous_deserialization=True
             )
-            cls.logger.info("Successfully loaded existing vector store")
+            logger.info("Successfully loaded existing vector store")
             return store
         except Exception as e:
-            cls.logger.warning(f"Failed to load existing store, creating new one. Error: {e}")
+            logger.warn(f"Failed to load existing store, creating new one. Error: {e}")
             initial_doc = Document(page_content="Memory store initialized.")
             store = FAISS.from_documents([initial_doc], embeddings)
             store.save_local(cls.persist_directory)
-            cls.logger.info("Successfully created new vector store")
+            logger.info("Successfully created new vector store")
             return store
 
     @classmethod
     def __init__(cls):
         """Initialize the memory tools with FAISS vector store."""
-        cls.logger.debug("Starting MemoryTools initialization")
+        logger.debug("Starting MemoryTools initialization")
         if cls.vector_store is None:
             cls.vector_store = cls._initialize_store()
-        cls.logger.info("MemoryTools initialization complete")
+        logger.info("MemoryTools initialization complete")
 
     @classmethod
     def save_memory(cls, memory: str) -> Union[str, Dict]:
@@ -57,17 +54,17 @@ class MemoryTools:
         Returns:
             Union[str, Dict]: Success message with memory ID if saved, or error message if failed.
         """
-        cls.logger.debug("Starting save_memory operation")
+        logger.debug("Starting save_memory operation")
         try:
             if not isinstance(memory, str) or not memory.strip():
-                cls.logger.warning("Attempted to save empty or invalid memory content")
+                logger.warn("Attempted to save empty or invalid memory content")
                 return "Error: Memory must be a non-empty string."
 
             memory_id = str(uuid.uuid4())
             current_time = datetime.now()
             timestamp = current_time.isoformat()
             
-            cls.logger.debug(f"Creating new memory document with ID: {memory_id}")
+            logger.debug(f"Creating new memory document with ID: {memory_id}")
             document = Document(
                 page_content=memory,
                 id=memory_id,
@@ -83,7 +80,7 @@ class MemoryTools:
             cls.vector_store.add_documents([document])
             cls.vector_store.save_local(cls.persist_directory)
             
-            cls.logger.info(f"Successfully saved memory with ID: {memory_id}")
+            logger.info(f"Successfully saved memory with ID: {memory_id}")
             return {
                 "status": "success",
                 "memory_id": memory_id,
@@ -91,7 +88,7 @@ class MemoryTools:
             }
             
         except Exception as e:
-            cls.logger.error(f"Error saving memory: {str(e)}", exc_info=True)
+            logger.error(f"Error saving memory: {str(e)}")
             return f"Error saving memory: {str(e)}"
 
     @classmethod
@@ -105,14 +102,14 @@ class MemoryTools:
         Returns:
             str: Description of deletion results
         """
-        cls.logger.debug(f"Starting delete_memory operation for ID: {id}")
+        logger.debug(f"Starting delete_memory operation for ID: {id}")
         try:
             cls.vector_store.delete([id])
             cls.vector_store.save_local(cls.persist_directory)
-            cls.logger.info(f"Successfully deleted memory with ID: {id}")
+            logger.info(f"Successfully deleted memory with ID: {id}")
             return f"Successfully deleted memory {id}"
         except Exception as e:
-            cls.logger.error(f"Error deleting memory with ID {id}: {str(e)}", exc_info=True)
+            logger.error(f"Error deleting memory with ID {id}: {str(e)}")
             return f"Error during memory deletion: {str(e)}"
 
     @classmethod
@@ -127,9 +124,9 @@ class MemoryTools:
         Returns:
             str: Description of update results
         """
-        cls.logger.debug("Starting update_memory operation")
+        logger.debug("Starting update_memory operation")
         try:
-            cls.logger.debug("Searching for memory to update...")
+            logger.debug("Searching for memory to update...")
             docs = cls.vector_store.similarity_search(old_memory_text, k=5)
             matching_doc = None
             
@@ -139,25 +136,25 @@ class MemoryTools:
                     break
                     
             if not matching_doc:
-                cls.logger.warning("Could not find exact memory to update")
+                logger.warn("Could not find exact memory to update")
                 return f"Could not find exact memory to update: {old_memory_text}"
             
             doc_id = matching_doc.metadata.get('id')
             if not doc_id:
-                cls.logger.warning("Failed to find document ID")
+                logger.warn("Failed to find document ID")
                 return "Failed to update: Could not find document ID"
 
-            cls.logger.debug(f"Found memory to update with ID: {doc_id}")
+            logger.debug(f"Found memory to update with ID: {doc_id}")
             original_timestamp = matching_doc.metadata.get('original_timestamp') or matching_doc.metadata.get('timestamp')
 
-            cls.logger.debug("Deleting old memory version...")
+            logger.debug("Deleting old memory version...")
             cls.vector_store.delete([doc_id])
             
             current_time = datetime.now()
             edited_memory = f"{new_memory_text} (Edited on {current_time.isoformat()})"
             new_memory_id = str(uuid.uuid4())
             
-            cls.logger.debug(f"Creating updated memory with new ID: {new_memory_id}")
+            logger.debug(f"Creating updated memory with new ID: {new_memory_id}")
             new_doc = Document(
                 page_content=edited_memory,
                 id=new_memory_id,
@@ -173,11 +170,11 @@ class MemoryTools:
             cls.vector_store.add_documents([new_doc])
             cls.vector_store.save_local(cls.persist_directory)
             
-            cls.logger.info(f"Successfully updated memory with new ID: {new_memory_id}")
+            logger.info(f"Successfully updated memory with new ID: {new_memory_id}")
             return f"Successfully updated memory: {edited_memory}"
             
         except Exception as e:
-            cls.logger.error(f"Error updating memory: {str(e)}", exc_info=True)
+            logger.error(f"Error updating memory: {str(e)}")
             return f"Error updating memory: {str(e)}"
 
     @classmethod
@@ -192,20 +189,20 @@ class MemoryTools:
         Returns:
             Union[List[Dict], str]: List of matching memories with metadata, or error message if failed.
         """
-        cls.logger.debug(f"Starting search_memories with query: '{query}', limit: {limit}")
+        logger.debug(f"Starting search_memories with query: '{query}', limit: {limit}")
         try:
             if not isinstance(query, str):
-                cls.logger.warning("Invalid query type provided")
+                logger.warn("Invalid query type provided")
                 return "Error: Query must be a string."
             if not query.strip():
-                cls.logger.warning("Empty query provided")
+                logger.warn("Empty query provided")
                 return "Error: Empty query is not allowed. Please provide a search term."
             
             if not isinstance(limit, int) or limit < 1:
-                cls.logger.warning("Invalid limit value provided")
+                logger.warn("Invalid limit value provided")
                 return "Error: Limit must be a positive integer."
 
-            cls.logger.debug("Executing similarity search")
+            logger.debug("Executing similarity search")
             documents = cls.vector_store.similarity_search(query, k=limit)
             
             results = []
@@ -216,13 +213,13 @@ class MemoryTools:
                     "timestamp": doc.metadata.get("timestamp")
                 })
             
-            cls.logger.info(f"Search completed. Found {len(results)} memories")
+            logger.info(f"Search completed. Found {len(results)} memories")
             if len(results) == 0:
-                cls.logger.debug("No memories found in search")
+                logger.debug("No memories found in search")
                 return "No memories found, memory list is empty"
             
             return results
 
         except Exception as e:
-            cls.logger.error(f"Error searching memories: {str(e)}", exc_info=True)
+            logger.error(f"Error searching memories: {str(e)}")
             return f"Error searching memories: {str(e)}"

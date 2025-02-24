@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from utils.date import get_montreal_time
-from utils.logger import setup_logger
+from utils.logger import logger
 
 class TaskData(TypedDict):
     title: str
@@ -24,9 +24,6 @@ class TaskTools:
     # Class variables
     persist_directory = "data/task_lumon"
     vector_store = None
-    
-    # Use the new logger utility
-    logger = setup_logger(__name__)
 
     @classmethod
     def _initialize_store(cls) -> FAISS:
@@ -35,24 +32,24 @@ class TaskTools:
         Returns:
             FAISS: Initialized FAISS vector store instance
         """
-        cls.logger.debug("Starting vector store initialization")
+        logger.debug("Starting vector store initialization")
         os.makedirs(cls.persist_directory, exist_ok=True)
         embeddings = OpenAIEmbeddings()
         try:
-            cls.logger.debug(f"Attempting to load existing vector store from {cls.persist_directory}")
+            logger.debug(f"Attempting to load existing vector store from {cls.persist_directory}")
             store = FAISS.load_local(
                 cls.persist_directory,
                 embeddings,
                 allow_dangerous_deserialization=True
             )
-            cls.logger.info("Successfully loaded existing task vector store")
+            logger.info("Successfully loaded existing task vector store")
             return store
         except Exception as e:
-            cls.logger.warning(f"Failed to load existing store, creating new one. Error: {e}")
+            logger.warn(f"Failed to load existing store, creating new one. Error: {e}")
             initial_doc = Document(page_content="Task store initialized.")
             store = FAISS.from_documents([initial_doc], embeddings)
             store.save_local(cls.persist_directory)
-            cls.logger.info("Successfully created new task vector store")
+            logger.info("Successfully created new task vector store")
             return store
 
     @classmethod
@@ -97,13 +94,13 @@ class TaskTools:
                 }
                 On failure, returns error message string.
         """
-        cls.logger.debug(f"Starting save_task operation for {len(tasks)} tasks")
+        logger.debug(f"Starting save_task operation for {len(tasks)} tasks")
         try:
             time_context = get_montreal_time()
             stored_tasks = []
             
             for task in tasks:
-                cls.logger.debug(f"Processing task: {task.get('title', 'NO TITLE')}")
+                logger.debug(f"Processing task: {task.get('title', 'NO TITLE')}")
                 # Set default values for missing fields
                 task_with_defaults = {
                     **task,
@@ -148,7 +145,7 @@ class TaskTools:
                 stored_tasks.append(task["title"])
             
             cls.vector_store.save_local(cls.persist_directory)
-            cls.logger.info(f"Successfully stored {len(stored_tasks)} tasks")
+            logger.info(f"Successfully stored {len(stored_tasks)} tasks")
             return {
                 "status": "success",
                 "tasks": stored_tasks,
@@ -156,7 +153,7 @@ class TaskTools:
             }
             
         except Exception as e:
-            cls.logger.error(f"Error saving tasks: {str(e)}", exc_info=True)
+            logger.error(f"Error saving tasks: {str(e)}")
             return f"Error saving tasks: {str(e)}"
 
     @classmethod
@@ -177,36 +174,36 @@ class TaskTools:
                 ]
                 On failure or no results, returns error message string.
         """
-        cls.logger.debug(f"Starting search_tasks with query: '{query}', limit: {limit}")
+        logger.debug(f"Starting search_tasks with query: '{query}', limit: {limit}")
         try:
             if not isinstance(query, str) or not query.strip():
-                cls.logger.warning("Invalid query provided")
+                logger.warn("Invalid query provided")
                 return "Error: Query must be a non-empty string."
 
-            cls.logger.debug("Executing similarity search")
+            logger.debug("Executing similarity search")
             documents = cls.vector_store.similarity_search(query, k=limit)
             
             results = []
             for doc in documents:
-                cls.logger.debug(f"Found matching task: {doc.metadata.get('title', 'NO TITLE')}")
+                logger.debug(f"Found matching task: {doc.metadata.get('title', 'NO TITLE')}")
                 results.append({
                     "content": doc.page_content,
                     "metadata": doc.metadata
                 })
             
-            cls.logger.info(f"Search completed. Found {len(results)} tasks")
+            logger.info(f"Search completed. Found {len(results)} tasks")
             return results if results else "No tasks found"
 
         except Exception as e:
-            cls.logger.error(f"Error searching tasks: {str(e)}", exc_info=True)
+            logger.error(f"Error searching tasks: {str(e)}")
             return f"Error searching tasks: {str(e)}"
 
     @classmethod
-    def delete_task(cls, task_text: str) -> str:
+    def delete_task(cls, id: str) -> str:
         """Delete a task based on its title or description.
 
         Args:
-            task_text (str): Text to match against task title or description
+            id (str): The ID of the task to delete
 
         Returns:
             str: Message describing the result of the deletion operation:
@@ -214,40 +211,15 @@ class TaskTools:
                 - "No tasks were deleted" if no matching tasks found
                 - Error message if operation fails
         """
-        cls.logger.debug(f"Starting delete_task operation for text: {task_text}")
+        logger.debug(f"Starting delete_task operation for id: {id}")
         try:
-            cls.logger.debug("Executing similarity search for deletion")
-            docs = cls.vector_store.similarity_search(task_text, k=5)
-            matching_docs = []
-            
-            for doc in docs:
-                metadata = doc.metadata
-                if (task_text.lower() in metadata.get('title', '').lower() or 
-                    task_text.lower() in metadata.get('description', '').lower()):
-                    cls.logger.debug(f"Found matching task for deletion: {metadata.get('title', 'NO TITLE')}")
-                    matching_docs.append(doc)
-            
-            if not matching_docs:
-                cls.logger.warning(f"No matching tasks found for deletion: {task_text}")
-                return f"Could not find task matching: {task_text}"
-            
-            deleted_count = 0
-            for doc in matching_docs:
-                doc_id = doc.metadata.get('id')
-                if doc_id:
-                    cls.logger.debug(f"Deleting task with ID: {doc_id}")
-                    cls.vector_store.delete([doc_id])
-                    deleted_count += 1
-            
-            if deleted_count > 0:
-                cls.vector_store.save_local(cls.persist_directory)
-                cls.logger.info(f"Successfully deleted {deleted_count} task(s)")
-                return f"Successfully deleted {deleted_count} task(s) matching: {task_text}"
-            
-            return "No tasks were deleted"
+            cls.vector_store.delete([id])
+            cls.vector_store.save_local(cls.persist_directory)
+            logger.info(f"Successfully deleted task with id: {id}") 
+            return f"Successfully deleted task with id: {id}"
             
         except Exception as e:
-            cls.logger.error(f"Error deleting task: {str(e)}", exc_info=True)
+            logger.error(f"Error deleting task: {str(e)}")
             return f"Error deleting task: {str(e)}"
 
     @classmethod
