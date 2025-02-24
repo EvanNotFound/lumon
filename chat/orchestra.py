@@ -5,7 +5,6 @@ from chat.agents.task_management import task_management_agent
 from utils.date import get_montreal_time
 from chat.tools.task_tools import TaskTools
 from chat.tools.memory_tools import MemoryTools
-import sys
 from typing import Dict
 import yaml
 
@@ -50,12 +49,12 @@ Current time in Montreal: {time_context["formatted"]}
 
 {sections['memory_guidelines']}
 
-Relevant Memories:
+Relevant Memories (These are only partial memories, you must search for more memories):
 {memory_context}
 
 {sections['task_guidelines']}
 
-Relevant Tasks:
+Relevant Tasks (These are only partial information, you must search for more tasks):
 {task_context}
 
 {sections['response_guidelines']}

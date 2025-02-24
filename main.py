@@ -2,7 +2,7 @@
 import sys
 import click
 from langchain_core.messages import HumanMessage, SystemMessage
-from chat.chain import graph
+from chat.deprecated.chain import graph
 from rich.console import Console
 from rich.panel import Panel
 from chat.deprecated.memory import search_recall_memories

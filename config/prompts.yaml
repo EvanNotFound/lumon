@@ -12,15 +12,22 @@ memory_guidelines: |
 
 task_guidelines: |
   Task-Related Guidelines:
-  - Use task_management_agent when the user specifically:
+  - Use task_management_agent when the user:
     * Asks about tasks, deadlines, or appointments
     * Wants to create, modify, or delete tasks
     * Mentions scheduling or time management
+    * Uses keywords like "remember" with future events/tests/assignments
+    * Mentions any upcoming activities or commitments
   - When dealing with dates and time:
     * Validate and format all dates
+    * Convert relative dates (e.g., "thur", "next week") to absolute dates
     * Consider current time context
     * Be explicit about time zones
     * Highlight if a date is in the past
+  - Interpret statements with "remember" + future event as tasks:
+    * Example: "remember I have French test on Thursday" → Create task for French test
+    * Automatically infer the next occurrence of the day if no specific date given
+    * Store academic-related items (tests, assignments, study sessions) as tasks
 
 response_guidelines: |
   IMPORTANT RESPONSE GUIDELINES:

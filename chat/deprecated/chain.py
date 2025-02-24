@@ -27,11 +27,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from chat.deprecated.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
-from chat.think import think_before_action, reflect_on_action
+from chat.deprecated.think import think_before_action, reflect_on_action
 from datetime import datetime
 from utils.date import get_montreal_time
 from chat.tools.date_tool import parse_date
-from chat.tools.task import save_task, search_task, delete_task, update_task
+from chat.deprecated.task import save_task, search_task, delete_task, update_task
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
