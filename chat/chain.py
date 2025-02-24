@@ -6,7 +6,7 @@ from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.prompts import MessagesPlaceholder, ChatPromptTemplate
 from langchain.memory import ConversationBufferMemory
 from chat.tools.calculation import add, multiply
-from chat.tools.search import search_tavily
+from chat.deprecated.search import search_tavily
 import tiktoken
 
 import json
@@ -26,7 +26,7 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
+from chat.deprecated.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
 from chat.think import think_before_action, reflect_on_action
 from datetime import datetime
 from utils.date import get_montreal_time

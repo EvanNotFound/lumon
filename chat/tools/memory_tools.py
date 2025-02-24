@@ -14,26 +14,32 @@ class MemoryTools:
     @classmethod
     def _initialize_store(cls) -> FAISS:
         """Helper method to initialize or load the vector store. Not for LLMs."""
+        print("Initializing vector store...")
         os.makedirs(cls.persist_directory, exist_ok=True)
         embeddings = OpenAIEmbeddings()
         try:
-            return FAISS.load_local(
+            store = FAISS.load_local(
                 cls.persist_directory,
                 embeddings,
                 allow_dangerous_deserialization=True
             )
+            print("Successfully loaded existing vector store")
+            return store
         except Exception as e:
             print(f"Creating new vector store: {e}")
             initial_doc = Document(page_content="Memory store initialized.")
             store = FAISS.from_documents([initial_doc], embeddings)
             store.save_local(cls.persist_directory)
+            print("Successfully created new vector store")
             return store
 
     @classmethod
     def __init__(cls):
         """Initialize the memory tools with FAISS vector store."""
+        print("Initializing MemoryTools...")
         if cls.vector_store is None:
             cls.vector_store = cls._initialize_store()
+        print("MemoryTools initialization complete")
 
     @classmethod
     def save_memory(cls, memory: str) -> Union[str, Dict]:
@@ -46,8 +52,10 @@ class MemoryTools:
         Returns:
             Union[str, Dict]: Success message with memory ID if saved, or error message if failed.
         """
+        print(f"Attempting to save new memory...")
         try:
             if not isinstance(memory, str) or not memory.strip():
+                print("Error: Empty or invalid memory content")
                 return "Error: Memory must be a non-empty string."
 
             memory_id = str(uuid.uuid4())
@@ -57,6 +65,7 @@ class MemoryTools:
             # Enhanced metadata similar to memory.py
             document = Document(
                 page_content=memory,
+                id=memory_id,
                 metadata={
                     "id": memory_id,
                     "timestamp": timestamp,
@@ -69,6 +78,7 @@ class MemoryTools:
             cls.vector_store.add_documents([document])
             cls.vector_store.save_local(cls.persist_directory)
             
+            print(f"Successfully saved memory with ID: {memory_id}")
             return {
                 "status": "success",
                 "memory_id": memory_id,
@@ -80,53 +90,24 @@ class MemoryTools:
             return f"Error saving memory: {str(e)}"
 
     @classmethod
-    def delete_memory(cls, memory_text: Union[str, List[str]]) -> str:
+    def delete_memory(cls, id: str) -> str:
         """
-        Delete one or more memories based on their exact text content.
+        Delete a memory based on its ID.
 
         Args:
-            memory_text: Single memory text or list of memory texts to delete
+            id: The ID of the memory to delete
 
         Returns:
             str: Description of deletion results
         """
-        if isinstance(memory_text, str):
-            memory_text = [memory_text]
-        
-        results = []
-        deleted_count = 0
-        
         try:
-            for text in memory_text:
-                docs = cls.vector_store.similarity_search(text, k=5)
-                matching_doc = None
-                
-                # Find exact match
-                for doc in docs:
-                    if doc.page_content.strip() == text.strip():
-                        matching_doc = doc
-                        break
-                
-                if not matching_doc:
-                    results.append(f"Could not find exact memory: {text}")
-                    continue
-                
-                doc_id = matching_doc.metadata.get('id')
-                if not doc_id:
-                    results.append(f"Failed to delete (no ID): {text}")
-                    continue
-
-                cls.vector_store.delete([doc_id])
-                deleted_count += 1
-                results.append(f"Successfully deleted: {matching_doc.page_content}")
-            
-            if deleted_count > 0:
-                cls.vector_store.save_local(cls.persist_directory)
-            
-            print(f"DEBUG: Deleted {deleted_count} memories and {results}")
-            return "\n".join(results)
-            
+            print(f"Attempting to delete memory with ID: {id}")
+            cls.vector_store.delete([id])
+            cls.vector_store.save_local(cls.persist_directory)
+            print(f"Successfully deleted memory with ID: {id}")
+            return f"Successfully deleted memory {id}"
         except Exception as e:
+            print(f"Error deleting memory with ID {id}: {str(e)}")
             return f"Error during memory deletion: {str(e)}"
 
     @classmethod
@@ -141,7 +122,9 @@ class MemoryTools:
         Returns:
             str: Description of update results
         """
+        print(f"Attempting to update memory...")
         try:
+            print("Searching for memory to update...")
             docs = cls.vector_store.similarity_search(old_memory_text, k=5)
             matching_doc = None
             
@@ -152,16 +135,19 @@ class MemoryTools:
                     break
                     
             if not matching_doc:
+                print(f"Could not find exact memory to update")
                 return f"Could not find exact memory to update: {old_memory_text}"
             
             doc_id = matching_doc.metadata.get('id')
             if not doc_id:
+                print("Failed to find document ID")
                 return "Failed to update: Could not find document ID"
 
-            # Get original timestamp
+            print(f"Found memory to update with ID: {doc_id}")
             original_timestamp = matching_doc.metadata.get('original_timestamp') or matching_doc.metadata.get('timestamp')
 
             # Delete old memory
+            print("Deleting old memory version...")
             cls.vector_store.delete([doc_id])
             
             # Create new memory with edit information
@@ -171,6 +157,7 @@ class MemoryTools:
             
             new_doc = Document(
                 page_content=edited_memory,
+                id=new_memory_id,
                 metadata={
                     "id": new_memory_id,
                     "timestamp": current_time.isoformat(),
@@ -180,12 +167,15 @@ class MemoryTools:
                 }
             )
             
+            print("Saving updated memory...")
             cls.vector_store.add_documents([new_doc])
             cls.vector_store.save_local(cls.persist_directory)
             
+            print(f"Successfully updated memory with new ID: {new_memory_id}")
             return f"Successfully updated memory: {edited_memory}"
             
         except Exception as e:
+            print(f"Error updating memory: {str(e)}")
             return f"Error updating memory: {str(e)}"
 
     @classmethod
@@ -200,11 +190,17 @@ class MemoryTools:
         Returns:
             Union[List[Dict], str]: List of matching memories with metadata, or error message if failed.
         """
+        print(f"Searching memories with query: '{query}' (limit: {limit})")
         try:
-            if not isinstance(query, str) or not query.strip():
-                return "Error: Query must be a non-empty string."
+            if not isinstance(query, str):
+                print("Error: Invalid query type")
+                return "Error: Query must be a string."
+            if not query.strip():
+                print("Error: Empty query")
+                return "Error: Empty query is not allowed. Please provide a search term."
             
             if not isinstance(limit, int) or limit < 1:
+                print("Error: Invalid limit value")
                 return "Error: Limit must be a positive integer."
 
             documents = cls.vector_store.similarity_search(query, k=limit)
@@ -219,6 +215,7 @@ class MemoryTools:
             
             print(f"Found {len(results)} memories")
             if (len(results) == 0):
+                print("No memories found")
                 return "No memories found, memory list is empty"
             
             return results

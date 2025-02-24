@@ -1,8 +1,4 @@
 from mainframe_orchestra import Agent, OpenaiModels
-from langchain_openai import OpenAIEmbeddings
-from langchain.storage import LocalFileStore
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
 from chat.tools.memory_tools import MemoryTools
 
 # Initialize the memory tools

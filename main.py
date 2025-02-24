@@ -6,7 +6,7 @@ from chat.chain import graph
 from utils.pretty_print import pretty_print_stream_chunk
 from rich.console import Console
 from rich.panel import Panel
-from chat.memory import search_recall_memories
+from chat.deprecated.memory import search_recall_memories
 from chat.orchestra import process_message
 from datetime import datetime
 import traceback
