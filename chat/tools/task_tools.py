@@ -191,7 +191,7 @@ class TaskTools:
                     "metadata": doc.metadata
                 })
             
-            logger.info(f"Search completed. Found {len(results)} tasks")
+            logger.info(f"Task search completed. Found {len(results)} tasks.")
             return results if results else "No tasks found"
 
         except Exception as e:

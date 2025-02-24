@@ -213,7 +213,7 @@ class MemoryTools:
                     "timestamp": doc.metadata.get("timestamp")
                 })
             
-            logger.info(f"Search completed. Found {len(results)} memories")
+            logger.info(f"Memory search completed. Found {len(results)} memories.")
             if len(results) == 0:
                 logger.debug("No memories found in search")
                 return "No memories found, memory list is empty"
