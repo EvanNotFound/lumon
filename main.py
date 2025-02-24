@@ -7,13 +7,21 @@ from utils.pretty_print import pretty_print_stream_chunk
 from rich.console import Console
 from rich.panel import Panel
 from chat.memory import search_recall_memories
-from chat.orchestra_chain import process_message
+from chat.orchestra import process_message
+from datetime import datetime
+import asyncio
+import aioconsole  # You'll need to install this package
 
 console = Console()
 
 @click.command()
 @click.option('--prod', '-p', is_flag=True, help='Run in production mode with enhanced UI')
 def main(prod):
+    return asyncio.run(async_main(prod))
+
+async def async_main(prod):
+    conversation_history = []
+
     if prod:
         console.print(Panel.fit(
             "[bold cyan]J.A.R.V.I.S.[/bold cyan] - Personal AI Assistant\n[dim]All systems are online and operational.[/dim]",
@@ -22,52 +30,23 @@ def main(prod):
         ))
     else:
         print("\n" + "="*50)
-        print("Initializing J.A.R.V.I.S. - Personal AI Assistant")
+        print("Initializing L.U.M.O.N. - Personal AI Assistant")
         print("All systems are online and operational.")
         print("="*50 + "\n")
     
     try:
         while True:
-            if prod:
-                console.print("\n[bold green]You:[/bold green] ", end="")
-                user_input = input().strip()
-            else:
-                user_input = input("\nYou: ").strip()
-            
-            if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
-                if prod:
-                    console.print("\n[bold cyan]J.A.R.V.I.S.:[/bold cyan] Goodbye, Sir!")
-                else:
-                    print("\nJ.A.R.V.I.S.: Goodbye, Sir!")
-                break
-                
-            if not user_input:
-                if prod:
-                    console.print("[yellow]Please say something![/yellow]")
-                else:
-                    print("Please say something!")
-                continue
-                
+            user_input = await aioconsole.ainput("\nYou: ")
+            user_input = user_input.strip()
+
+            conversation_history.append({"role": "user", "content": user_input})
+        
             try:
-                # Load memories
-                recall_memories = search_recall_memories(user_input)
-                memory_context = {
-                    "recall_memories": recall_memories
-                }
-                
-                # Process message
-                response = process_message(user_input, memory_context)
-                
-                # Print response
-                if prod:
-                    console.print(Panel(
-                        response,
-                        title="J.A.R.V.I.S.",
-                        border_style="cyan",
-                        padding=(1, 2)
-                    ))
-                else:
-                    print("\nJ.A.R.V.I.S.:", response)
+                # Process message with minimal context
+                response = await process_message(user_input, conversation_history)
+
+                conversation_history.append({"role": "assistant", "content": response})
+                print("\nL.U.M.O.N.:", response)
                 
             except Exception as e:
                 import traceback

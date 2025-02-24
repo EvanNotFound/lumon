@@ -39,9 +39,6 @@ class State(MessagesState):
     task_list: List[str]
     time_context: str  # Add this field to store time information
 
-recall_vector_store = InMemoryVectorStore(OpenAIEmbeddings())
-
-
 # Break down the prompt into logical sections for easier maintenance
 SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and thinking capabilities. Powered by a stateless LLM, you must rely on external memory to store information between conversations. 
 
