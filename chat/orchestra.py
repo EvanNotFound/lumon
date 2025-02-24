@@ -6,6 +6,13 @@ from utils.date import get_montreal_time
 from chat.tools.task_tools import TaskTools
 from chat.tools.memory_tools import MemoryTools
 import sys
+from typing import Dict
+import yaml
+
+def load_prompt_sections() -> Dict[str, str]:
+    """Load prompt sections from YAML configuration"""
+    with open('config/prompts.yaml', 'r') as file:
+        return yaml.safe_load(file)
 
 lumon_agent = Agent(
     agent_id="lumon_agent",
@@ -29,68 +36,43 @@ lumon_agent = Agent(
 
 def create_lumon_task(user_input: str, conversation_history: list):
     time_context = get_montreal_time()
-    
     memory_context = MemoryTools.search_memories("relevant memories", limit=10)
     task_context = TaskTools.search_tasks("relevant tasks", limit=10)
     
-    # Simplified system prompt
+    # Load modular prompt sections
+    sections = load_prompt_sections()
+    
+    # Construct context with loaded sections
     context = f"""
-You are L.U.M.O.N., an AI assistant focused on being helpful and efficient in your responses.
-
-Keep your responses clear and concise while maintaining a professional tone.
+{sections['base']}
 
 Current time in Montreal: {time_context["formatted"]}
 
-Relevant Memories (This is only partial information, you must search for more memories):
+{sections['memory_guidelines']}
+
+Relevant Memories:
 {memory_context}
 
-Relevant Tasks (This is only partial information, you must search for more tasks):
+{sections['task_guidelines']}
+
+Relevant Tasks:
 {task_context}
 
-IMPORTANT RESPONSE GUIDELINES:
-
-- Never narrate your actions in brackets (e.g., don't say "[Using memory_management_agent...]")
-- Don't announce when you're about to use tools
-- Just use the tools directly and incorporate their results into your response
-- Keep responses natural and conversational
-
-Task-Related Guidelines:
-- Use task_management_agent when the user specifically:
-  * Asks about tasks, deadlines, or appointments
-  * Wants to create, modify, or delete tasks
-  * Mentions scheduling or time management
-- When dealing with dates and time:
-  * Validate and format all dates
-  * Consider current time context
-  * Be explicit about time zones
-  * Highlight if a date is in the past
-
-Memory Usage Guidelines:
-- Use memory_management_agent for user preferences, identity, and non-task interactions
-- Cross-reference new information with existing memories for consistency
-- Update your understanding of the user with each new piece of information
-- Prioritize recent memories over older ones when relevant
-- When memories contain outdated information, acknowledge the timeline
-
-Your capabilities include:
-- Web research to find current information (using web_research_agent)
-- Memory management to maintain context (using memory_management_agent)
-- Task management for scheduling and tracking (using task_management_agent)
-- Coordinating multiple agents to solve complex problems
-
-Act as a concise, efficient AI assistant. Be direct and straightforward in your responses while maintaining helpfulness.
+{sections['response_guidelines']}
 """
 
     return Task.create(
         agent=lumon_agent,
         context=context,
         messages=conversation_history,
-        instruction=user_input
+        instruction=user_input,
+        # stream=True,
+        initial_response=True
     )
 
 def process_message(user_input: str, conversation_history: list):
     """Process a user message and return the response"""
-    
+
     response = create_lumon_task(user_input, conversation_history)
     
     return response
