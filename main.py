@@ -3,13 +3,14 @@ import sys
 import click
 from langchain_core.messages import HumanMessage, SystemMessage
 from chat.chain import graph
-from utils.pretty_print import pretty_print_stream_chunk
 from rich.console import Console
 from rich.panel import Panel
 from chat.deprecated.memory import search_recall_memories
 from chat.orchestra import process_message
 from datetime import datetime
 import traceback
+from rich.markdown import Markdown
+from mainframe_orchestra import set_verbosity
 
 console = Console()
 
@@ -20,7 +21,7 @@ def main(prod):
 
     if prod:
         console.print(Panel.fit(
-            "[bold cyan]J.A.R.V.I.S.[/bold cyan] - Personal AI Assistant\n[dim]All systems are online and operational.[/dim]",
+            "[bold cyan]L.U.M.O.N.[/bold cyan] - Personal AI Assistant\n[dim]All systems are online and operational.[/dim]",
             border_style="cyan",
             padding=(1, 2)
         ))
@@ -37,10 +38,23 @@ def main(prod):
             conversation_history.append({"role": "user", "content": user_input})
         
             try:
+                if prod:
+                    set_verbosity(0)
                 response = process_message(user_input, conversation_history)
 
                 conversation_history.append({"role": "assistant", "content": response})
-                print("\nL.U.M.O.N.:", response)
+                if prod:
+                    console.print("\nL.U.M.O.N.:", style="cyan bold")
+                    md = Markdown(response)
+                    console.print(Panel.fit(
+                        md,
+                        border_style="cyan",
+                        padding=(1, 2)
+                    ))
+                else:
+                    print("\nL.U.M.O.N.:")
+                    md = Markdown(response)
+                    console.print(md)
                 
             except Exception as e:
                 if prod:
