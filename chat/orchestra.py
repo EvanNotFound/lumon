@@ -58,6 +58,9 @@ Relevant Tasks (These are only partial information, you must search for more tas
 {task_context}
 
 {sections['response_guidelines']}
+
+
+If you need to search the web, use the web_research_agent.
 """
 
     return Task.create(
