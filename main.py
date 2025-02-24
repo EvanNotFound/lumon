@@ -9,17 +9,13 @@ from rich.panel import Panel
 from chat.memory import search_recall_memories
 from chat.orchestra import process_message
 from datetime import datetime
-import asyncio
-import aioconsole  # You'll need to install this package
+import traceback
 
 console = Console()
 
 @click.command()
 @click.option('--prod', '-p', is_flag=True, help='Run in production mode with enhanced UI')
 def main(prod):
-    return asyncio.run(async_main(prod))
-
-async def async_main(prod):
     conversation_history = []
 
     if prod:
@@ -36,20 +32,17 @@ async def async_main(prod):
     
     try:
         while True:
-            user_input = await aioconsole.ainput("\nYou: ")
-            user_input = user_input.strip()
+            user_input = input("\nYou: ").strip()
 
             conversation_history.append({"role": "user", "content": user_input})
         
             try:
-                # Process message with minimal context
-                response = await process_message(user_input, conversation_history)
+                response = process_message(user_input, conversation_history)
 
                 conversation_history.append({"role": "assistant", "content": response})
                 print("\nL.U.M.O.N.:", response)
                 
             except Exception as e:
-                import traceback
                 if prod:
                     console.print("\n[red]Error occurred while processing your request:[/red]")
                     console.print(f"[red]Type: {type(e).__name__}[/red]")
