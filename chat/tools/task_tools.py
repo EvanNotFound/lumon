@@ -7,7 +7,9 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from utils.date import get_montreal_time
-from utils.logger import logger
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class TaskData(TypedDict):
     title: str
@@ -45,7 +47,7 @@ class TaskTools:
             logger.info("Successfully loaded existing task vector store")
             return store
         except Exception as e:
-            logger.warn(f"Failed to load existing store, creating new one. Error: {e}")
+            logger.warning(f"Failed to load existing store, creating new one. Error: {e}")
             initial_doc = Document(page_content="Task store initialized.")
             store = FAISS.from_documents([initial_doc], embeddings)
             store.save_local(cls.persist_directory)
@@ -177,7 +179,7 @@ class TaskTools:
         logger.debug(f"Starting search_tasks with query: '{query}', limit: {limit}")
         try:
             if not isinstance(query, str) or not query.strip():
-                logger.warn("Invalid query provided")
+                logger.warning("Invalid query provided")
                 return "Error: Query must be a non-empty string."
 
             logger.debug("Executing similarity search")

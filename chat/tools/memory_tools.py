@@ -5,7 +5,9 @@ import os
 from datetime import datetime
 import uuid
 from typing import Union, List, Dict
-from utils.logger import logger
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class MemoryTools:
     # Make these class variables instead of instance variables
@@ -28,7 +30,7 @@ class MemoryTools:
             logger.info("Successfully loaded existing vector store")
             return store
         except Exception as e:
-            logger.warn(f"Failed to load existing store, creating new one. Error: {e}")
+            logger.warning(f"Failed to load existing store, creating new one. Error: {e}")
             initial_doc = Document(page_content="Memory store initialized.")
             store = FAISS.from_documents([initial_doc], embeddings)
             store.save_local(cls.persist_directory)
@@ -57,7 +59,7 @@ class MemoryTools:
         logger.debug("Starting save_memory operation")
         try:
             if not isinstance(memory, str) or not memory.strip():
-                logger.warn("Attempted to save empty or invalid memory content")
+                logger.warning("Attempted to save empty or invalid memory content")
                 return "Error: Memory must be a non-empty string."
 
             memory_id = str(uuid.uuid4())
@@ -136,12 +138,12 @@ class MemoryTools:
                     break
                     
             if not matching_doc:
-                logger.warn("Could not find exact memory to update")
+                logger.warning("Could not find exact memory to update")
                 return f"Could not find exact memory to update: {old_memory_text}"
             
             doc_id = matching_doc.metadata.get('id')
             if not doc_id:
-                logger.warn("Failed to find document ID")
+                logger.warning("Failed to find document ID")
                 return "Failed to update: Could not find document ID"
 
             logger.debug(f"Found memory to update with ID: {doc_id}")
@@ -192,14 +194,14 @@ class MemoryTools:
         logger.debug(f"Starting search_memories with query: '{query}', limit: {limit}")
         try:
             if not isinstance(query, str):
-                logger.warn("Invalid query type provided")
+                logger.warning("Invalid query type provided")
                 return "Error: Query must be a string."
             if not query.strip():
-                logger.warn("Empty query provided")
+                logger.warning("Empty query provided")
                 return "Error: Empty query is not allowed. Please provide a search term."
             
             if not isinstance(limit, int) or limit < 1:
-                logger.warn("Invalid limit value provided")
+                logger.warning("Invalid limit value provided")
                 return "Error: Limit must be a positive integer."
 
             logger.debug("Executing similarity search")

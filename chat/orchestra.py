@@ -8,7 +8,9 @@ from chat.tools.memory_tools import MemoryTools
 from typing import Dict
 import yaml
 import tiktoken
-from utils.logger import logger
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 def load_prompt_sections() -> Dict[str, str]:
     """Load prompt sections from YAML configuration"""

@@ -1,13 +1,20 @@
 # main.py
 import sys
 import click
+import os
+
+# Check for production mode from command line arguments
+if "--prod" in sys.argv or "-p" in sys.argv:
+    # Set environment variable for modules that might be imported before main() runs
+    os.environ["LUMON_PROD_MODE"] = "true"
+
 from rich.console import Console
 from rich.panel import Panel
-from chat.orchestra import process_message
 import traceback
 from rich.markdown import Markdown
 from mainframe_orchestra import set_verbosity
-from chat.orchestra import load_prompt_sections
+from utils.logger import set_production_mode
+from chat.orchestra import load_prompt_sections, process_message
 from chat.tools.memory_tools import MemoryTools
 from chat.tools.task_tools import TaskTools
 
@@ -16,6 +23,10 @@ console = Console()
 @click.command()
 @click.option('--prod', '-p', is_flag=True, help='Run in production mode with enhanced UI')
 def main(prod):
+    # Set production mode in the logger if --prod flag is used
+    if prod:
+        set_production_mode(True)
+        
     sections = load_prompt_sections()
     memory_context = MemoryTools.search_memories("relevant memories", limit=10)
     task_context = TaskTools.search_tasks("relevant tasks", limit=10)
