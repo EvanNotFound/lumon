@@ -6,7 +6,7 @@ from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.prompts import MessagesPlaceholder, ChatPromptTemplate
 from langchain.memory import ConversationBufferMemory
 from chat.tools.calculation import add, multiply
-from chat.tools.search import search_tavily
+from chat.deprecated.search import search_tavily
 import tiktoken
 
 import json
@@ -26,21 +26,18 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from chat.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
-from chat.think import think_before_action, reflect_on_action
+from chat.deprecated.memory import save_recall_memory, search_recall_memories, delete_specific_memory, update_recall_memory
+from chat.deprecated.think import think_before_action, reflect_on_action
 from datetime import datetime
 from utils.date import get_montreal_time
 from chat.tools.date_tool import parse_date
-from chat.tools.task import save_task, search_task, delete_task, update_task
+from chat.deprecated.task import save_task, search_task, delete_task, update_task
 
 class State(MessagesState):
     # add memories that will be retrieved based on the conversation context
     recall_memories: List[str]
     task_list: List[str]
     time_context: str  # Add this field to store time information
-
-recall_vector_store = InMemoryVectorStore(OpenAIEmbeddings())
-
 
 # Break down the prompt into logical sections for easier maintenance
 SYSTEM_BASE = """You are a helpful assistant with advanced long-term memory and thinking capabilities. Powered by a stateless LLM, you must rely on external memory to store information between conversations. 

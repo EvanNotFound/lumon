@@ -172,5 +172,9 @@ cython_debug/
 
 # Storage
 data
+data_bcp
 
 .DS_Store
+
+debug_main.py
+orchestra_example.py
