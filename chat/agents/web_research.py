@@ -10,7 +10,7 @@ import os
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
 
 config = BrowserConfig(
-    chrome_instance_path=os.getenv("CHROM_INSTANCE_PATH"),
+    chrome_instance_path=os.getenv("CHROME_INSTANCE_PATH"),
 )
 
 browser = Browser(config=config)
