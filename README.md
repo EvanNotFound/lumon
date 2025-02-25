@@ -36,6 +36,8 @@ Lumon is a personal AI assistant built with Python that provides a conversationa
    OPENROUTER_API_KEY=your_openrouter_api_key
    GEMINI_API_KEY=your_gemini_api_key
    ANONYMIZED_TELEMETRY=false
+
+   CHROME_INSTANCE_PATH=your_chrome_instance_path (eg /Applications/Chromium.app/Contents/MacOS/Chromium)
    ```
 
 ## Usage
