@@ -31,6 +31,9 @@ task_guidelines: |
     * Mentions scheduling or time management
     * Uses keywords like "remember" with future events/tests/assignments
     * Mentions any upcoming activities or commitments
+    * Requests to list, view, or show tasks
+  - When listing tasks:
+    * Present tasks in chronological order by default
   - When dealing with dates and time:
     * Validate and format all dates
     * Convert relative dates (e.g., "thur", "next week") to absolute dates

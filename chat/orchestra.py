@@ -7,6 +7,8 @@ from chat.tools.task_tools import TaskTools
 from chat.tools.memory_tools import MemoryTools
 from typing import Dict
 import yaml
+import tiktoken
+from utils.logger import logger
 
 def load_prompt_sections() -> Dict[str, str]:
     """Load prompt sections from YAML configuration"""
@@ -35,35 +37,25 @@ lumon_agent = Agent(
 
 def create_lumon_task(user_input: str, conversation_history: list):
     time_context = get_montreal_time()
-    memory_context = MemoryTools.search_memories("relevant memories", limit=10)
-    task_context = TaskTools.search_tasks("relevant tasks", limit=10)
-    
-    # Load modular prompt sections
-    sections = load_prompt_sections()
-    
+
     # Construct context with loaded sections
     context = f"""
-{sections['base']}
-
 Current time in Montreal: {time_context["formatted"]}
-
-{sections['memory_guidelines']}
-
-Relevant Memories (These are only partial memories, you must search for more memories):
-{memory_context}
-
-{sections['task_guidelines']}
-
-Relevant Tasks (These are only partial information, you must search for more tasks):
-{task_context}
-
-{sections['response_guidelines']}
-
-
-If you need to search the web, use the web_research_agent.
 """
+    
+    # Initialize tiktoken encoder
+    enc = tiktoken.encoding_for_model("gpt-4o-mini")
 
-    return Task.create(
+    # Convert conversation history to strings if they're dictionaries
+    conversation_str = "\n".join(
+        msg["content"] if isinstance(msg, dict) else str(msg) 
+        for msg in conversation_history
+    )
+
+    # Calculate token count
+    input_tokens = len(enc.encode(context + "\n\n" + conversation_str + "\n\n" + user_input))
+    
+    response = Task.create(
         agent=lumon_agent,
         context=context,
         messages=conversation_history,
@@ -72,9 +64,22 @@ If you need to search the web, use the web_research_agent.
         initial_response=True
     )
 
-def process_message(user_input: str, conversation_history: list):
-    """Process a user message and return the response"""
+    response_tokens = len(enc.encode(response))
+    total_tokens = input_tokens + response_tokens
+    logger.debug(f"Token count: {total_tokens} total" \
+                f" ({input_tokens} input, {response_tokens} response)")
 
+    return response
+
+def process_message(user_input: str, conversation_history: list):
+    """Process a user message and return the response with token count"""
+    
+    # Get response
     response = create_lumon_task(user_input, conversation_history)
+
+    
+    # Add token count information
+    # token_info = f"\n\n---\nTokens used: {total_tokens} total" \
+    #              f" ({input_tokens} input, {response_tokens} response)"
     
     return response

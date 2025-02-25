@@ -1,23 +1,49 @@
 # main.py
 import sys
 import click
-from langchain_core.messages import HumanMessage, SystemMessage
-from chat.deprecated.chain import graph
 from rich.console import Console
 from rich.panel import Panel
-from chat.deprecated.memory import search_recall_memories
 from chat.orchestra import process_message
-from datetime import datetime
 import traceback
 from rich.markdown import Markdown
 from mainframe_orchestra import set_verbosity
+from chat.orchestra import load_prompt_sections
+from chat.tools.memory_tools import MemoryTools
+from chat.tools.task_tools import TaskTools
 
 console = Console()
 
 @click.command()
 @click.option('--prod', '-p', is_flag=True, help='Run in production mode with enhanced UI')
 def main(prod):
+    sections = load_prompt_sections()
+    memory_context = MemoryTools.search_memories("relevant memories", limit=10)
+    task_context = TaskTools.search_tasks("relevant tasks", limit=10)
+    
+    system_prompt = f"""
+    {sections['base']}
+
+    {sections['memory_guidelines']}
+
+    Relevant Memories (These are only partial memories, you must search for more memories):
+    {memory_context}
+
+    {sections['task_guidelines']}
+
+    Relevant Tasks (These are only partial information, you must search for more tasks):
+    {task_context}
+    
+    {sections['response_guidelines']}
+
+    If you need to search the web, use the web_research_agent.
+    """
+    
     conversation_history = []
+
+    conversation_history.append({
+        "role": "system",
+        "content": system_prompt
+    })
 
     if prod:
         console.print(Panel.fit(

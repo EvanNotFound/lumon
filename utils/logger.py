@@ -3,8 +3,8 @@ import logging
 from datetime import datetime
 
 # Environment configuration
-IS_PROD = os.getenv('NODE_ENV') == 'production'
-IS_DEBUG = os.getenv('DEBUG') == 'true'
+IS_PROD = os.getenv('ENVIRONMENT') == 'production'
+IS_DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
 # ANSI color codes
 class Colors:
@@ -48,10 +48,10 @@ class CustomLogger:
 
     def warn(self, message: str, data: any = None):
         if IS_PROD:
-            self.logger.warn(f"{message}{' ' + str(data) if data else ''}")
+            self.logger.warning(f"{message}{' ' + str(data) if data else ''}")
         else:
             formatted = self._format_message("WARN", Colors.YELLOW, message)
-            self.logger.warn(formatted + (f" {data}" if data else ""))
+            self.logger.warning(formatted + (f" {data}" if data else ""))
 
     def error(self, message: str, err: any = None):
         if IS_PROD:
