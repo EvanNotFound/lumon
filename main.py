@@ -31,6 +31,20 @@ def main(prod):
     memory_context = MemoryTools.search_memories("relevant memories", limit=10)
     task_context = TaskTools.search_tasks("relevant tasks", limit=10)
     
+    # Define the warning message separately to avoid deep nesting in format string
+    tool_warning = """
+⚠️ CRITICAL WARNING ⚠️: When you need to use an agent (web_research_agent, memory_management_agent, or task_management_agent), 
+you must ALWAYS use the conduct_tool to delegate tasks. NEVER try to call these agents directly as tools themselves.
+
+INCORRECT (DO NOT DO THIS):
+{"tool_calls":[{"tool":"task_management_agent","params":{"task_id":"search_upcoming_tests","instruction":"List all upcoming tests"}}]}
+
+CORRECT (ALWAYS DO THIS):
+{"tool_calls":[{"tool":"conduct_tool","params":{"tasks":[{"task_id":"search_upcoming_tests","agent_id":"task_management_agent","instruction":"List all upcoming tests"}]}}]}
+
+If you need to search the web, use the web_research_agent through the conduct_tool.
+"""
+    
     system_prompt = f"""
     {sections['base']}
 
@@ -46,7 +60,7 @@ def main(prod):
     
     {sections['response_guidelines']}
 
-    If you need to search the web, use the web_research_agent.
+    {tool_warning}
     """
     
     conversation_history = []

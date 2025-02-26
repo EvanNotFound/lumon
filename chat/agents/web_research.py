@@ -30,7 +30,7 @@ class BrowserTools:
         browser_agent = BrowserAgent(
             task=f"Browse the web and find information about {instruction}. Close cookies modals and other popups before using the page.",
             llm=ChatGoogleGenerativeAI(model='gemini-2.0-flash', api_key=GEMINI_API_KEY, temperature=0.2),
-            browser=browser
+            browser=browser,
         )
         result = await browser_agent.run()
         return result
