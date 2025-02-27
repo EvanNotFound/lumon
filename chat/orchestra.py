@@ -31,7 +31,7 @@ lumon_agent = Agent(
     {"tasks": [{"task_id": "search_tasks", "agent_id": "task_management_agent", "instruction": "Search for all tasks"}]}
     """,
     llm=OpenaiModels.gpt_4o_mini,  # Or your preferred model
-    temperature=0.6,  # Lower temperature for more deterministic behavior
+    temperature=0.7,  # Lower temperature for more deterministic behavior
     tools=[
         Conduct.conduct_tool(web_research_agent, memory_management_agent, task_management_agent)
     ]
