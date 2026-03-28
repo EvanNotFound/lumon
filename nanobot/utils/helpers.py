@@ -32,7 +32,9 @@ def detect_image_mime(data: bytes) -> str | None:
     return None
 
 
-def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
+def build_image_content_blocks(
+    raw: bytes, mime: str, path: str, label: str
+) -> list[dict[str, Any]]:
     """Build native image blocks plus a short text label."""
     b64 = base64.b64encode(raw).decode()
     return [
@@ -65,6 +67,7 @@ def current_time_str() -> str:
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
 
+
 def safe_filename(name: str) -> str:
     """Replace unsafe path characters with underscores."""
     return _UNSAFE_CHARS.sub("_", name).strip()
@@ -92,9 +95,9 @@ def split_message(content: str, max_len: int = 2000) -> list[str]:
             break
         cut = content[:max_len]
         # Try to break at newline first, then space, then hard break
-        pos = cut.rfind('\n')
+        pos = cut.rfind("\n")
         if pos <= 0:
-            pos = cut.rfind(' ')
+            pos = cut.rfind(" ")
         if pos <= 0:
             pos = max_len
         chunks.append(content[:pos])
@@ -117,6 +120,45 @@ def build_assistant_message(
     if thinking_blocks:
         msg["thinking_blocks"] = thinking_blocks
     return msg
+
+
+def should_emit_progress(
+    channels_config: Any | None,
+    *,
+    tool_hint: bool = False,
+    progress_kind: str | None = None,
+) -> bool:
+    """Return whether a progress update should be shown to the user."""
+    if channels_config is None:
+        return True
+
+    if tool_hint:
+        return bool(getattr(channels_config, "send_tool_hints", True))
+
+    if not bool(getattr(channels_config, "send_progress", True)):
+        return False
+
+    if progress_kind == "reasoning":
+        return bool(getattr(channels_config, "send_reasoning_steps", True))
+
+    return True
+
+
+def should_emit_progress_message(
+    metadata: dict[str, Any] | None,
+    channels_config: Any | None,
+) -> bool:
+    """Return whether a queued progress message should be delivered."""
+    meta = metadata or {}
+    tool_hint = bool(meta.get("_tool_hint"))
+    progress_kind = meta.get("_progress_kind")
+    if not isinstance(progress_kind, str):
+        progress_kind = "tool_hint" if tool_hint else None
+    return should_emit_progress(
+        channels_config,
+        tool_hint=tool_hint,
+        progress_kind=progress_kind,
+    )
 
 
 def estimate_prompt_tokens(
@@ -248,7 +290,9 @@ def trim_history_for_budget(
     if removed_count > 0:
         logger.debug(
             "Context budget: trimmed {} history messages ({} tokens) for iteration {}",
-            removed_count, removed_tokens, iteration,
+            removed_count,
+            removed_tokens,
+            iteration,
         )
 
     return system + old_history + current_turn
@@ -297,21 +341,28 @@ def build_status_content(
     last_out = last_usage.get("completion_tokens", 0)
     ctx_total = max(context_window_tokens, 0)
     ctx_pct = int((context_tokens_estimate / ctx_total) * 100) if ctx_total > 0 else 0
-    ctx_used_str = f"{context_tokens_estimate // 1000}k" if context_tokens_estimate >= 1000 else str(context_tokens_estimate)
+    ctx_used_str = (
+        f"{context_tokens_estimate // 1000}k"
+        if context_tokens_estimate >= 1000
+        else str(context_tokens_estimate)
+    )
     ctx_total_str = f"{ctx_total // 1024}k" if ctx_total > 0 else "n/a"
-    return "\n".join([
-        f"\U0001f408 nanobot v{version}",
-        f"\U0001f9e0 Model: {model}",
-        f"\U0001f4ca Tokens: {last_in} in / {last_out} out",
-        f"\U0001f4da Context: {ctx_used_str}/{ctx_total_str} ({ctx_pct}%)",
-        f"\U0001f4ac Session: {session_msg_count} messages",
-        f"\u23f1 Uptime: {uptime}",
-    ])
+    return "\n".join(
+        [
+            f"\U0001f408 nanobot v{version}",
+            f"\U0001f9e0 Model: {model}",
+            f"\U0001f4ca Tokens: {last_in} in / {last_out} out",
+            f"\U0001f4da Context: {ctx_used_str}/{ctx_total_str} ({ctx_pct}%)",
+            f"\U0001f4ac Session: {session_msg_count} messages",
+            f"\u23f1 Uptime: {uptime}",
+        ]
+    )
 
 
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
     """Sync bundled templates to workspace. Only creates missing files."""
     from importlib.resources import files as pkg_files
+
     try:
         tpl = pkg_files("nanobot") / "templates"
     except Exception:
@@ -337,6 +388,7 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
 
     if added and not silent:
         from rich.console import Console
+
         for name in added:
             Console().print(f"  [dim]Created {name}[/dim]")
     return added

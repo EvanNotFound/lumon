@@ -1180,6 +1180,7 @@ Global settings that apply to all channels. Configure under the `channels` secti
 {
   "channels": {
     "sendProgress": true,
+    "sendReasoningSteps": true,
     "sendToolHints": false,
     "sendMaxRetries": 3,
     "telegram": { ... }
@@ -1190,8 +1191,11 @@ Global settings that apply to all channels. Configure under the `channels` secti
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `sendProgress` | `true` | Stream agent's text progress to the channel |
+| `sendReasoningSteps` | `true` | Show visible reasoning-step progress while keeping other progress enabled |
 | `sendToolHints` | `false` | Stream tool-call hints (e.g. `read_file("…")`) |
 | `sendMaxRetries` | `3` | Max delivery attempts per outbound message, including the initial send (0-10 configured, minimum 1 actual attempt) |
+
+Set `sendReasoningSteps` to `false` when you want to keep final answers and tool hints, but hide the agent's intermediate reasoning-step display.
 
 #### Retry Behavior
 

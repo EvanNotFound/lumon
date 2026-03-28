@@ -11,6 +11,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Config
+from nanobot.utils.helpers import should_emit_progress_message
 
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
@@ -128,15 +129,10 @@ class ChannelManager:
                 if pending:
                     msg = pending.pop(0)
                 else:
-                    msg = await asyncio.wait_for(
-                        self.bus.consume_outbound(),
-                        timeout=1.0
-                    )
+                    msg = await asyncio.wait_for(self.bus.consume_outbound(), timeout=1.0)
 
                 if msg.metadata.get("_progress"):
-                    if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
-                        continue
-                    if not msg.metadata.get("_tool_hint") and not self.config.channels.send_progress:
+                    if not should_emit_progress_message(msg.metadata, self.config.channels):
                         continue
 
                 # Coalesce consecutive _stream_delta messages for the same (channel, chat_id)
@@ -229,13 +225,20 @@ class ChannelManager:
                 if attempt == max_attempts - 1:
                     logger.error(
                         "Failed to send to {} after {} attempts: {} - {}",
-                        msg.channel, max_attempts, type(e).__name__, e
+                        msg.channel,
+                        max_attempts,
+                        type(e).__name__,
+                        e,
                     )
                     return
                 delay = _SEND_RETRY_DELAYS[min(attempt, len(_SEND_RETRY_DELAYS) - 1)]
                 logger.warning(
                     "Send to {} failed (attempt {}/{}): {}, retrying in {}s",
-                    msg.channel, attempt + 1, max_attempts, type(e).__name__, delay
+                    msg.channel,
+                    attempt + 1,
+                    max_attempts,
+                    type(e).__name__,
+                    delay,
                 )
                 try:
                     await asyncio.sleep(delay)
@@ -249,10 +252,7 @@ class ChannelManager:
     def get_status(self) -> dict[str, Any]:
         """Get status of all channels."""
         return {
-            name: {
-                "enabled": True,
-                "running": channel.is_running
-            }
+            name: {"enabled": True, "running": channel.is_running}
             for name, channel in self.channels.items()
         }
 
