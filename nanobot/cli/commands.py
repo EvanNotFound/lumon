@@ -1,12 +1,12 @@
 """CLI commands for nanobot."""
 
 import asyncio
-from contextlib import contextmanager, nullcontext
-
+import json
 import os
 import select
 import signal
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
 from nanobot.config.paths import get_workspace_path, is_default_workspace
 from nanobot.config.schema import Config
 from nanobot.utils.helpers import (
+    should_allow_live_streaming,
     should_emit_progress,
     should_emit_progress_message,
     sync_workspace_templates,
@@ -365,8 +366,6 @@ def _merge_missing_defaults(existing: Any, defaults: Any) -> Any:
 
 def _onboard_plugins(config_path: Path) -> None:
     """Inject default config for all discovered channels (built-in + plugins)."""
-    import json
-
     from nanobot.channels.registry import discover_all
 
     all_channels = discover_all()
@@ -480,7 +479,6 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 
 def _warn_deprecated_config_keys(config_path: Path | None) -> None:
     """Hint users to remove obsolete keys from their config file."""
-    import json
     from nanobot.config.loader import get_config_path
 
     path = config_path or get_config_path()
@@ -802,21 +800,26 @@ def agent(
     if message:
         # Single message mode — direct call, no bus needed
         async def run_once():
-            renderer = StreamRenderer(render_markdown=markdown)
+            renderer = None
+            if should_allow_live_streaming(agent_loop.channels_config):
+                renderer = StreamRenderer(render_markdown=markdown)
             response = await agent_loop.process_direct(
                 message,
                 session_id,
                 on_progress=_cli_progress,
-                on_stream=renderer.on_delta,
-                on_stream_end=renderer.on_end,
+                on_stream=renderer.on_delta if renderer else None,
+                on_stream_end=renderer.on_end if renderer else None,
             )
-            if not renderer.streamed:
-                await renderer.close()
+            if not renderer or not renderer.streamed:
+                if renderer:
+                    await renderer.close()
                 _print_agent_response(
                     response.content if response else "",
                     render_markdown=markdown,
                     metadata=response.metadata if response else None,
                 )
+            elif renderer:
+                await renderer.close()
             await agent_loop.close_mcp()
 
         asyncio.run(run_once())

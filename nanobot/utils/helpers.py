@@ -161,6 +161,11 @@ def should_emit_progress_message(
     )
 
 
+def should_allow_live_streaming(channels_config: Any | None) -> bool:
+    """Return whether live response streaming should be enabled."""
+    return should_emit_progress(channels_config, progress_kind="reasoning")
+
+
 def estimate_prompt_tokens(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,

@@ -9,14 +9,21 @@ from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.message import MessageTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import ChannelsConfig
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
-def _make_loop(tmp_path: Path) -> AgentLoop:
+def _make_loop(tmp_path: Path, *, channels_config: ChannelsConfig | None = None) -> AgentLoop:
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    return AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    return AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=tmp_path,
+        model="test-model",
+        channels_config=channels_config,
+    )
 
 
 class TestMessageToolSuppressLogic:
@@ -161,6 +168,80 @@ class TestMessageToolSuppressLogic:
         assert tool_hint.metadata["_progress"] is True
         assert tool_hint.metadata["_progress_kind"] == "tool_hint"
         assert tool_hint.metadata["_tool_hint"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "channels_config",
+        [
+            ChannelsConfig(send_progress=False),
+            ChannelsConfig(send_reasoning_steps=False),
+        ],
+    )
+    async def test_dispatch_disables_streaming_when_reasoning_visibility_hidden(
+        self,
+        tmp_path: Path,
+        channels_config: ChannelsConfig,
+    ) -> None:
+        loop = _make_loop(tmp_path, channels_config=channels_config)
+        response = LLMResponse(content="Done", tool_calls=[])
+        loop.provider.chat_with_retry = AsyncMock(return_value=response)
+        loop.provider.chat_stream_with_retry = AsyncMock(return_value=response)
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="user1",
+            chat_id="chat123",
+            content="Hi",
+            metadata={"_wants_stream": True},
+        )
+
+        await loop._dispatch(msg)
+
+        outbound = await loop.bus.consume_outbound()
+
+        assert outbound.content == "Done"
+        assert outbound.metadata.get("_streamed") is None
+        loop.provider.chat_with_retry.assert_awaited_once()
+        loop.provider.chat_stream_with_retry.assert_not_awaited()
+        assert loop.bus.outbound.empty()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_keeps_streaming_when_reasoning_visible(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path, channels_config=ChannelsConfig())
+
+        async def _stream_response(*_args, **kwargs):
+            await kwargs["on_content_delta"]("Hello")
+            return LLMResponse(content="Hello", tool_calls=[])
+
+        loop.provider.chat_with_retry = AsyncMock(
+            return_value=LLMResponse(content="fallback", tool_calls=[])
+        )
+        loop.provider.chat_stream_with_retry = AsyncMock(side_effect=_stream_response)
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="user1",
+            chat_id="chat123",
+            content="Hi",
+            metadata={"_wants_stream": True},
+        )
+
+        await loop._dispatch(msg)
+
+        delta = await loop.bus.consume_outbound()
+        stream_end = await loop.bus.consume_outbound()
+        final = await loop.bus.consume_outbound()
+
+        assert delta.content == "Hello"
+        assert delta.metadata["_stream_delta"] is True
+        assert stream_end.metadata["_stream_end"] is True
+        assert final.content == "Hello"
+        assert final.metadata["_streamed"] is True
+        loop.provider.chat_stream_with_retry.assert_awaited_once()
+        loop.provider.chat_with_retry.assert_not_awaited()
+        assert loop.bus.outbound.empty()
 
 
 class TestMessageToolTurnTracking:

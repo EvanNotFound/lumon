@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
@@ -15,9 +14,9 @@ from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryConsolidator
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -25,11 +24,11 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.utils.helpers import build_status_content, trim_history_for_budget
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
+from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
+from nanobot.utils.helpers import should_allow_live_streaming, trim_history_for_budget
 
 if TYPE_CHECKING:
     from nanobot.config.schema import (
@@ -438,10 +437,13 @@ class AgentLoop:
         gate = self._concurrency_gate or nullcontext()
         async with lock, gate:
             try:
-                on_stream = on_stream_end = None
-                if msg.metadata.get("_wants_stream"):
+                stream_callback: Callable[[str], Awaitable[None]] | None = None
+                stream_end_callback: Callable[..., Awaitable[None]] | None = None
+                if msg.metadata.get("_wants_stream") and should_allow_live_streaming(
+                    self.channels_config
+                ):
 
-                    async def on_stream(delta: str) -> None:
+                    async def _stream_callback(delta: str) -> None:
                         await self.bus.publish_outbound(
                             OutboundMessage(
                                 channel=msg.channel,
@@ -451,7 +453,7 @@ class AgentLoop:
                             )
                         )
 
-                    async def on_stream_end(*, resuming: bool = False) -> None:
+                    async def _stream_end_callback(*, resuming: bool = False) -> None:
                         await self.bus.publish_outbound(
                             OutboundMessage(
                                 channel=msg.channel,
@@ -461,10 +463,13 @@ class AgentLoop:
                             )
                         )
 
+                    stream_callback = _stream_callback
+                    stream_end_callback = _stream_end_callback
+
                 response = await self._process_message(
                     msg,
-                    on_stream=on_stream,
-                    on_stream_end=on_stream_end,
+                    on_stream=stream_callback,
+                    on_stream_end=stream_end_callback,
                 )
                 if response is not None:
                     await self.bus.publish_outbound(response)

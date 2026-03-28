@@ -1197,6 +1197,8 @@ Global settings that apply to all channels. Configure under the `channels` secti
 
 Set `sendReasoningSteps` to `false` when you want to keep final answers and tool hints, but hide the agent's intermediate reasoning-step display.
 
+When `sendProgress` or `sendReasoningSteps` is `false`, streaming channels fall back to a final one-shot reply so partial reasoning or tool-planning text is not shown live.
+
 #### Retry Behavior
 
 When a channel send operation raises an error, nanobot retries with exponential backoff:
