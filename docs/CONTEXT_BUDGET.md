@@ -34,7 +34,7 @@ During multi-turn tool-use sessions, each iteration re-sends the full conversati
 
 ## Trade-offs
 
-**Cost & latency** — Trimming reduces tokens sent each iteration, which saves money and lowers first-token time (TTFT). This is nanobot's primary sweet spot.
+**Cost & latency** — Trimming reduces tokens sent each iteration, which saves money and lowers first-token time (TTFT). This is one of Lumon AI's primary sweet spots.
 
 **Context loss** — Older context is not visible to the LLM in later iterations. For tasks that genuinely require 20+ iterations of history to stay coherent, consider `0` or `4000`.
 

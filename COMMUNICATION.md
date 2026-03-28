@@ -1,5 +1,8 @@
-We provide QR codes for joining the HKUDS discussion groups on **WeChat** and **Feishu**.
+# Communication
 
-You can join by scanning the QR codes below:
+Lumon AI does not currently publish official WeChat, Feishu, or Discord community links for this fork.
 
-<img src="https://github.com/HKUDS/.github/blob/main/profile/QR.png" alt="WeChat QR Code" width="400"/>
+For discussion, bug reports, and contributions, use GitHub:
+
+- Issues: https://github.com/EvanNotFound/lumon/issues
+- Pull requests: https://github.com/EvanNotFound/lumon/pulls

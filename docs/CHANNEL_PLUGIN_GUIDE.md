@@ -1,12 +1,14 @@
 # Channel Plugin Guide
 
-Build a custom nanobot channel in three steps: subclass, package, install.
+Build a custom Lumon AI channel in three steps: subclass, package, install.
 
-> **Note:** We recommend developing channel plugins against a source checkout of nanobot (`pip install -e .`) rather than a PyPI release, so you always have access to the latest base-channel features and APIs.
+> **Compatibility note:** Lumon AI still uses the existing `nanobot` CLI, package, config path, and `nanobot.channels` entry point group. The operational identifiers below stay unchanged for now.
+>
+> **Note:** We recommend developing channel plugins against a source checkout of this repository (`pip install -e .`) rather than a PyPI release, so you always have access to the latest base-channel features and APIs.
 
 ## How It Works
 
-nanobot discovers channel plugins via Python [entry points](https://packaging.python.org/en/latest/specifications/entry-points/). When `nanobot gateway` starts, it scans:
+Lumon AI currently discovers channel plugins via nanobot's Python [entry points](https://packaging.python.org/en/latest/specifications/entry-points/). When `nanobot gateway` starts, it scans:
 
 1. Built-in channels in `nanobot/channels/`
 2. External packages registered under the `nanobot.channels` entry point group

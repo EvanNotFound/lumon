@@ -1,69 +1,34 @@
-# Contributing to nanobot
+# Contributing to Lumon AI
 
 Thank you for being here.
 
-nanobot is built with a simple belief: good tools should feel calm, clear, and humane.
-We care deeply about useful features, but we also believe in achieving more with less:
-solutions should be powerful without becoming heavy, and ambitious without becoming
-needlessly complicated.
+Lumon AI is built on top of nanobot, but this fork is maintained with a simpler goal: ship faster, keep history understandable, and make outside contribution less painful.
 
-This guide is not only about how to open a PR. It is also about how we hope to build
-software together: with care, clarity, and respect for the next person reading the code.
-
-## Maintainers
-
-| Maintainer | Focus |
-|------------|-------|
-| [@re-bin](https://github.com/re-bin) | Project lead, `main` branch |
-| [@chengyongru](https://github.com/chengyongru) | `nightly` branch, experimental features |
+This guide explains how to contribute to the fork without breaking compatibility where the runtime still uses `nanobot` package, CLI, and path names.
 
 ## Branching Strategy
 
-We use a two-branch model to balance stability and exploration:
-
-| Branch | Purpose | Stability |
-|--------|---------|-----------|
-| `main` | Stable releases | Production-ready |
-| `nightly` | Experimental features | May have bugs or breaking changes |
+We use a single-branch workflow.
 
 ### Which Branch Should I Target?
 
-**Target `nightly` if your PR includes:**
+Target `main` for all pull requests:
 
 - New features or functionality
-- Refactoring that may affect existing behavior
-- Changes to APIs or configuration
-
-**Target `main` if your PR includes:**
-
-- Bug fixes with no behavior changes
+- Bug fixes
 - Documentation improvements
-- Minor tweaks that don't affect functionality
-
-**When in doubt, target `nightly`.** It is easier to move a stable idea from `nightly`
-to `main` than to undo a risky change after it lands in the stable branch.
-
-### How Does Nightly Get Merged to Main?
-
-We don't merge the entire `nightly` branch. Instead, stable features are **cherry-picked** from `nightly` into individual PRs targeting `main`:
-
-```
-nightly  ──┬── feature A (stable) ──► PR ──► main
-           ├── feature B (testing)
-           └── feature C (stable) ──► PR ──► main
-```
-
-This happens approximately **once a week**, but the timing depends on when features become stable enough.
+- Refactoring
+- Changes to APIs or configuration
 
 ### Quick Summary
 
 | Your Change | Target Branch |
 |-------------|---------------|
-| New feature | `nightly` |
+| New feature | `main` |
 | Bug fix | `main` |
 | Documentation | `main` |
-| Refactoring | `nightly` |
-| Unsure | `nightly` |
+| Refactoring | `main` |
+| Unsure | `main` |
 
 ## Development Setup
 
@@ -71,8 +36,8 @@ Keep setup boring and reliable. The goal is to get you into the code quickly:
 
 ```bash
 # Clone the repository
-git clone https://github.com/HKUDS/nanobot.git
-cd nanobot
+git clone https://github.com/EvanNotFound/lumon.git
+cd lumon
 
 # Install with dev dependencies
 pip install -e ".[dev]"
@@ -89,7 +54,7 @@ ruff format nanobot/
 
 ## Code Style
 
-We care about more than passing lint. We want nanobot to stay small, calm, and readable.
+We care about more than passing lint. We want Lumon AI to stay small, calm, and readable.
 
 When contributing, please aim for code that feels:
 
@@ -108,15 +73,15 @@ In practice:
 - Prefer readable code over magical code
 - Prefer focused patches over broad rewrites
 - If a new abstraction is introduced, it should clearly reduce complexity rather than move it around
+- Keep operational identifiers such as `nanobot`, `nanobot-ai`, and `~/.nanobot` intact unless the task explicitly changes them
 
 ## Questions?
 
 If you have questions, ideas, or half-formed insights, you are warmly welcome here.
 
-Please feel free to open an [issue](https://github.com/HKUDS/nanobot/issues), join the community, or simply reach out:
+Please open an issue or pull request in this repository:
 
-- [Discord](https://discord.gg/MnCvHqpUGB)
-- [Feishu/WeChat](./COMMUNICATION.md)
-- Email: Xubin Ren (@Re-bin) — <xubinrencs@gmail.com>
+- Issues: https://github.com/EvanNotFound/lumon/issues
+- Pull requests: https://github.com/EvanNotFound/lumon/pulls
 
-Thank you for spending your time and care on nanobot. We would love for more people to participate in this community, and we genuinely welcome contributions of all sizes.
+Thank you for spending your time and care on Lumon AI. Contributions of all sizes are welcome.

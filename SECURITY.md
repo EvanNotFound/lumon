@@ -2,10 +2,10 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in nanobot, please report it by:
+If you discover a security vulnerability in Lumon AI, please report it by:
 
 1. **DO NOT** open a public GitHub issue
-2. Create a private security advisory on GitHub or contact the repository maintainers (xubinrencs@gmail.com)
+2. Create a private security advisory on GitHub for this repository
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
@@ -67,7 +67,7 @@ The `exec` tool can execute shell commands. While dangerous command patterns are
 - ✅ Review all tool usage in agent logs
 - ✅ Understand what commands the agent is running
 - ✅ Use a dedicated user account with limited privileges
-- ✅ Never run nanobot as root
+- ✅ Never run Lumon AI as root
 - ❌ Don't disable security checks
 - ❌ Don't run on systems with sensitive data without careful review
 
@@ -82,7 +82,7 @@ The `exec` tool can execute shell commands. While dangerous command patterns are
 
 File operations have path traversal protection, but:
 
-- ✅ Run nanobot with a dedicated user account
+- ✅ Run Lumon AI with a dedicated user account
 - ✅ Use filesystem permissions to protect sensitive directories
 - ✅ Regularly audit file operations in logs
 - ❌ Don't give unrestricted access to sensitive files
@@ -120,10 +120,10 @@ npm audit fix
 ```
 
 **Important Notes:**
-- Keep `litellm` updated to the latest version for security fixes
+- Keep Python and Node dependencies updated to current secure versions
 - We've updated `ws` to `>=8.17.1` to fix DoS vulnerability
 - Run `pip-audit` or `npm audit` regularly
-- Subscribe to security advisories for nanobot and its dependencies
+- Subscribe to security advisories for Lumon AI and its dependencies
 
 ### 7. Production Deployment
 
@@ -138,8 +138,8 @@ For production use:
 
 2. **Use a Dedicated User**
    ```bash
-   sudo useradd -m -s /bin/bash nanobot
-   sudo -u nanobot nanobot gateway
+   sudo useradd -m -s /bin/bash lumon
+   sudo -u lumon nanobot gateway
    ```
 
 3. **Set Proper Permissions**
@@ -237,7 +237,7 @@ If you suspect a security breach:
 
 ## Security Checklist
 
-Before deploying nanobot:
+Before deploying Lumon AI:
 
 - [ ] API keys stored securely (not in code)
 - [ ] Config file permissions set to 0600
@@ -252,11 +252,11 @@ Before deploying nanobot:
 
 ## Updates
 
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-03-28
 
 For the latest security updates and announcements, check:
-- GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories
-- Release Notes: https://github.com/HKUDS/nanobot/releases
+- GitHub Security Advisories: https://github.com/EvanNotFound/lumon/security/advisories
+- Release Notes: https://github.com/EvanNotFound/lumon/releases
 
 ## License
 
