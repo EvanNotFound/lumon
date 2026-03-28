@@ -8,8 +8,6 @@ I forked it because I personally disagree with the HKUDS/nanobot workflow: repea
 
 For compatibility, the operational names below still use the existing `nanobot` CLI, package name, Python module names, and `~/.nanobot` paths.
 
-📏 Real-time line count: run `bash core_agent_lines.sh` to verify anytime.
-
 > Lumon AI is for educational, research, and technical exchange purposes only.
 
 ## Why Lumon AI
