@@ -72,6 +72,51 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+def _format_mcp_status_content(statuses: list[dict]) -> str:
+    """Format MCP server status lines for human-readable command output."""
+    if not statuses:
+        return "No MCP servers configured."
+
+    icon_map = {
+        "connected": "[ok]",
+        "failed": "[fail]",
+        "uninitialized": "[init]",
+        "connecting": "[wait]",
+    }
+
+    lines = ["MCP servers:"]
+    for item in statuses:
+        name = str(item.get("name") or "(unknown)")
+        state = str(item.get("state") or "unknown")
+        icon = icon_map.get(state, "[?]")
+        transport = str(item.get("transport") or "unknown")
+        registered = item.get("registered_tools") or []
+        available = item.get("available_tools") or []
+        lines.append(
+            f"  {icon} {name} - {state} ({transport}) - tools: {len(registered)}/{len(available)}"
+        )
+        error = item.get("error")
+        if error and state != "connected":
+            lines.append(f"    error: {error}")
+
+    return "\n".join(lines)
+
+
+async def cmd_mcp(ctx: CommandContext) -> OutboundMessage:
+    """Run a live MCP health check and summarize status for all configured servers."""
+    check = getattr(ctx.loop, "refresh_mcp_status", None)
+    statuses: list[dict] = []
+    if callable(check):
+        statuses = await check(reconnect=True)
+    content = _format_mcp_status_content(statuses)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={"render_as": "text"},
+    )
+
+
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     """Start a fresh session."""
     loop = ctx.loop
@@ -170,6 +215,7 @@ def build_help_text() -> str:
         "/stop — Stop the current task",
         "/restart — Restart the bot",
         "/status — Show bot status",
+        "/mcp — Check MCP server status",
         "/skills — List available skills",
         "$<name> — Activate a skill inline (e.g. $weather what's the forecast)",
         "/help — Show available commands",
@@ -184,6 +230,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
+    router.exact("/mcp", cmd_mcp)
     router.exact("/help", cmd_help)
     router.exact("/skills", cmd_skill_list)
     router.intercept(intercept_skill_refs)

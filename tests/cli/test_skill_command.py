@@ -233,4 +233,5 @@ class TestHelpIncludesSkill:
 
         assert response is not None
         assert "/skills" in response.content
+        assert "/mcp" in response.content
         assert "$" in response.content

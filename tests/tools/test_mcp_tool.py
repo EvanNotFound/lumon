@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager
 import sys
+from contextlib import AsyncExitStack, asynccontextmanager
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -243,7 +243,7 @@ async def test_connect_mcp_servers_enabled_tools_supports_raw_names(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        results = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=["demo"])},
             registry,
             stack,
@@ -252,6 +252,10 @@ async def test_connect_mcp_servers_enabled_tools_supports_raw_names(
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_demo"]
+    assert results["test"].connected is True
+    assert results["test"].transport == "stdio"
+    assert results["test"].registered_tools == ["mcp_test_demo"]
+    assert results["test"].available_tools == ["demo", "other"]
 
 
 @pytest.mark.asyncio
@@ -263,7 +267,7 @@ async def test_connect_mcp_servers_enabled_tools_defaults_to_all(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        results = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake")},
             registry,
             stack,
@@ -272,6 +276,8 @@ async def test_connect_mcp_servers_enabled_tools_defaults_to_all(
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_demo", "mcp_test_other"]
+    assert results["test"].connected is True
+    assert sorted(results["test"].registered_tools) == ["mcp_test_demo", "mcp_test_other"]
 
 
 @pytest.mark.asyncio
@@ -303,7 +309,7 @@ async def test_connect_mcp_servers_enabled_tools_empty_list_registers_none(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        results = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=[])},
             registry,
             stack,
@@ -312,6 +318,8 @@ async def test_connect_mcp_servers_enabled_tools_empty_list_registers_none(
         await stack.aclose()
 
     assert registry.tool_names == []
+    assert results["test"].connected is True
+    assert results["test"].registered_tools == []
 
 
 @pytest.mark.asyncio
@@ -330,7 +338,7 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        results = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=["unknown"])},
             registry,
             stack,
@@ -339,7 +347,22 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
         await stack.aclose()
 
     assert registry.tool_names == []
+    assert results["test"].connected is True
     assert warnings
     assert "enabledTools entries not found: unknown" in warnings[-1]
     assert "Available raw names: demo" in warnings[-1]
     assert "Available wrapped names: mcp_test_demo" in warnings[-1]
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_reports_missing_command_or_url() -> None:
+    registry = ToolRegistry()
+    stack = AsyncExitStack()
+    await stack.__aenter__()
+    try:
+        results = await connect_mcp_servers({"test": MCPServerConfig()}, registry, stack)
+    finally:
+        await stack.aclose()
+
+    assert results["test"].connected is False
+    assert results["test"].error == "no command or url configured"

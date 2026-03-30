@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import AsyncExitStack
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -9,6 +10,32 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+
+
+@dataclass
+class MCPServerConnectResult:
+    """Outcome snapshot for connecting a single MCP server."""
+
+    name: str
+    transport: str = "unknown"
+    connected: bool = False
+    session: Any | None = None
+    registered_tools: list[str] = field(default_factory=list)
+    available_tools: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+def _resolve_transport_type(cfg: Any) -> str | None:
+    """Resolve MCP transport type from explicit config or command/url hints."""
+    transport_type = cfg.type
+    if transport_type:
+        return transport_type
+    if cfg.command:
+        return "stdio"
+    if cfg.url:
+        # Convention: URLs ending with /sse use SSE transport; others use streamableHttp.
+        return "sse" if cfg.url.rstrip("/").endswith("/sse") else "streamableHttp"
+    return None
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict[str, Any], bool] | None:
@@ -57,9 +84,7 @@ def _normalize_schema_for_openai(schema: Any) -> dict[str, Any]:
 
     if "properties" in normalized and isinstance(normalized["properties"], dict):
         normalized["properties"] = {
-            name: _normalize_schema_for_openai(prop)
-            if isinstance(prop, dict)
-            else prop
+            name: _normalize_schema_for_openai(prop) if isinstance(prop, dict) else prop
             for name, prop in normalized["properties"].items()
         }
 
@@ -137,27 +162,32 @@ class MCPToolWrapper(Tool):
 
 async def connect_mcp_servers(
     mcp_servers: dict, registry: ToolRegistry, stack: AsyncExitStack
-) -> None:
+) -> dict[str, MCPServerConnectResult]:
     """Connect to configured MCP servers and register their tools."""
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.sse import sse_client
-    from mcp.client.stdio import stdio_client
-    from mcp.client.streamable_http import streamable_http_client
+    results = {name: MCPServerConnectResult(name=name) for name in mcp_servers}
+
+    try:
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client
+        from mcp.client.streamable_http import streamable_http_client
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        for name, result in results.items():
+            result.error = err
+            logger.error("MCP server '{}': failed to load MCP SDK: {}", name, err)
+        return results
 
     for name, cfg in mcp_servers.items():
+        result = results[name]
         try:
-            transport_type = cfg.type
+            transport_type = _resolve_transport_type(cfg)
             if not transport_type:
-                if cfg.command:
-                    transport_type = "stdio"
-                elif cfg.url:
-                    # Convention: URLs ending with /sse use SSE transport; others use streamableHttp
-                    transport_type = (
-                        "sse" if cfg.url.rstrip("/").endswith("/sse") else "streamableHttp"
-                    )
-                else:
-                    logger.warning("MCP server '{}': no command or url configured, skipping", name)
-                    continue
+                msg = "no command or url configured"
+                result.error = msg
+                logger.warning("MCP server '{}': {}, skipping", name, msg)
+                continue
+            result.transport = transport_type
 
             if transport_type == "stdio":
                 params = StdioServerParameters(
@@ -165,6 +195,7 @@ async def connect_mcp_servers(
                 )
                 read, write = await stack.enter_async_context(stdio_client(params))
             elif transport_type == "sse":
+
                 def httpx_client_factory(
                     headers: dict[str, str] | None = None,
                     timeout: httpx.Timeout | None = None,
@@ -196,17 +227,20 @@ async def connect_mcp_servers(
                 )
             else:
                 logger.warning("MCP server '{}': unknown transport type '{}'", name, transport_type)
+                result.error = f"unknown transport type '{transport_type}'"
                 continue
 
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
 
             tools = await session.list_tools()
+            result.session = session
             enabled_tools = set(cfg.enabled_tools)
             allow_all_tools = "*" in enabled_tools
             registered_count = 0
             matched_enabled_tools: set[str] = set()
             available_raw_names = [tool_def.name for tool_def in tools.tools]
+            result.available_tools = available_raw_names
             available_wrapped_names = [f"mcp_{name}_{tool_def.name}" for tool_def in tools.tools]
             for tool_def in tools.tools:
                 wrapped_name = f"mcp_{name}_{tool_def.name}"
@@ -224,6 +258,7 @@ async def connect_mcp_servers(
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
+                result.registered_tools.append(wrapper.name)
                 registered_count += 1
                 if enabled_tools:
                     if tool_def.name in enabled_tools:
@@ -243,6 +278,10 @@ async def connect_mcp_servers(
                         ", ".join(available_wrapped_names) or "(none)",
                     )
 
+            result.connected = True
             logger.info("MCP server '{}': connected, {} tools registered", name, registered_count)
         except Exception as e:
+            result.error = f"{type(e).__name__}: {e}"
             logger.error("MCP server '{}': failed to connect: {}", name, e)
+
+    return results
