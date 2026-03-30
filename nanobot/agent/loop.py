@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
+from nanobot.agent.runner import AgentRunner, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
@@ -72,6 +74,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        runtime_timezone: str | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, InputLimitsConfig, WebSearchConfig
 
@@ -91,10 +94,16 @@ class AgentLoop:
         self.input_limits = input_limits or InputLimitsConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.runtime_timezone = runtime_timezone
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
 
-        self.context = ContextBuilder(workspace, input_limits=self.input_limits)
+        self.context = ContextBuilder(
+            workspace,
+            input_limits=self.input_limits,
+            runtime_timezone=self.runtime_timezone,
+        )
+        self.runner = AgentRunner(provider)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -106,6 +115,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            runtime_timezone=self.runtime_timezone,
         )
 
         self._running = False
@@ -268,146 +278,118 @@ class AgentLoop:
         ``resuming=False`` means this is the final response.
         """
         messages = initial_messages
-        iteration = 0
-        final_content = None
-        tools_used: list[str] = []
         turn_start_index = len(initial_messages) - 1
         blocked_tools = {name for name in (disabled_tools or set()) if name}
 
-        # Wrap on_stream with stateful think-tag filter so downstream
-        # consumers (CLI, channels) never see <think> blocks.
-        _raw_stream = on_stream
-        _stream_buf = ""
+        class _ScopedTools:
+            """Filter tool definitions and gate disabled tools at execution."""
 
-        async def _filtered_stream(delta: str) -> None:
-            nonlocal _stream_buf
-            from nanobot.utils.helpers import strip_think
+            def __init__(self, registry: ToolRegistry, blocked: set[str]):
+                self._registry = registry
+                self._blocked = blocked
 
-            prev_clean = strip_think(_stream_buf)
-            _stream_buf += delta
-            new_clean = strip_think(_stream_buf)
-            incremental = new_clean[len(prev_clean) :]
-            if incremental and _raw_stream:
-                await _raw_stream(incremental)
-
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            tool_defs = self.tools.get_definitions()
-            if blocked_tools:
-                tool_defs = [
+            def get_definitions(self) -> list[dict[str, Any]]:
+                tool_defs = self._registry.get_definitions()
+                if not self._blocked:
+                    return tool_defs
+                return [
                     td
                     for td in tool_defs
-                    if ((td.get("function") or {}).get("name") not in blocked_tools)
+                    if ((td.get("function") or {}).get("name") not in self._blocked)
                 ]
 
-            send_messages = self._trim_history_for_budget(
-                messages,
-                turn_start_index,
-                iteration,
-            )
+            async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+                if tool_name in self._blocked:
+                    return f"Error: Tool '{tool_name}' is disabled in this context"
+                return await self._registry.execute(tool_name, arguments)
 
-            if on_stream:
-                response = await self.provider.chat_stream_with_retry(
-                    messages=send_messages,
-                    tools=tool_defs,
-                    model=self.model,
-                    on_content_delta=_filtered_stream,
+        class _LoopHook(AgentHook):
+            def __init__(
+                self,
+                loop: AgentLoop,
+                turn_start: int,
+                stream_cb: Callable[[str], Awaitable[None]] | None,
+                stream_end_cb: Callable[..., Awaitable[None]] | None,
+            ):
+                self._loop = loop
+                self._turn_start = turn_start
+                self._raw_stream = stream_cb
+                self._stream_end = stream_end_cb
+                self._stream_buf = ""
+
+            def wants_streaming(self) -> bool:
+                return self._raw_stream is not None
+
+            async def before_iteration(self, context: AgentHookContext) -> None:
+                context.messages = self._loop._trim_history_for_budget(
+                    context.messages,
+                    self._turn_start,
+                    context.iteration + 1,
                 )
-            else:
-                response = await self.provider.chat_with_retry(
-                    messages=send_messages,
-                    tools=tool_defs,
-                    model=self.model,
-                )
-            usage = response.usage or {}
-            self._last_usage = {
-                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
-                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
-            }
 
-            if response.has_tool_calls:
-                if on_stream and on_stream_end:
-                    await on_stream_end(resuming=True)
-                    _stream_buf = ""
-
-                if on_progress:
-                    if not on_stream:
-                        thought = self._strip_think(response.content)
+            async def before_execute_tools(self, context: AgentHookContext) -> None:
+                if on_progress and context.response:
+                    if not self.wants_streaming():
+                        thought = self._loop._strip_think(context.response.content)
                         if thought:
                             await on_progress(thought)
-                    tool_hint = self._tool_hint(response.tool_calls)
-                    tool_hint = self._strip_think(tool_hint)
-                    await on_progress(tool_hint, tool_hint=True)
+                    tool_hint = self._loop._strip_think(self._loop._tool_hint(context.tool_calls))
+                    if tool_hint:
+                        await on_progress(tool_hint, tool_hint=True)
 
-                tool_call_dicts = [tc.to_openai_tool_call() for tc in response.tool_calls]
-                messages = self.context.add_assistant_message(
-                    messages,
-                    response.content,
-                    tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                    thinking_blocks=response.thinking_blocks,
-                )
-
-                for tc in response.tool_calls:
-                    tools_used.append(tc.name)
-                    args_str = json.dumps(tc.arguments, ensure_ascii=False)
-                    logger.info("Tool call: {}({})", tc.name, args_str[:200])
+                for tool_call in context.tool_calls:
+                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
 
                 # Re-bind tool context right before execution so that
                 # concurrent sessions don't clobber each other's routing.
-                self._set_tool_context(channel, chat_id, message_id)
+                self._loop._set_tool_context(channel, chat_id, message_id)
 
-                # Execute all tool calls concurrently — the LLM batches
-                # independent calls in a single response on purpose.
-                # return_exceptions=True ensures all results are collected
-                # even if one tool is cancelled or raises BaseException.
-                async def _disabled_tool_result(tool_name: str) -> str:
-                    return f"Error: Tool '{tool_name}' is disabled in this context"
+            async def on_stream(self, context: AgentHookContext, delta: str) -> None:
+                if not self._raw_stream:
+                    return
+                from nanobot.utils.helpers import strip_think
 
-                results = await asyncio.gather(
-                    *(
-                        _disabled_tool_result(tc.name)
-                        if tc.name in blocked_tools
-                        else self.tools.execute(tc.name, tc.arguments)
-                        for tc in response.tool_calls
-                    ),
-                    return_exceptions=True,
-                )
+                prev_clean = strip_think(self._stream_buf)
+                self._stream_buf += delta
+                new_clean = strip_think(self._stream_buf)
+                incremental = new_clean[len(prev_clean) :]
+                if incremental:
+                    await self._raw_stream(incremental)
 
-                for tool_call, result in zip(response.tool_calls, results):
-                    if isinstance(result, BaseException):
-                        result = f"Error: {type(result).__name__}: {result}"
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-            else:
-                if on_stream and on_stream_end:
-                    await on_stream_end(resuming=False)
-                    _stream_buf = ""
+            async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+                if self._raw_stream and self._stream_end:
+                    await self._stream_end(resuming=resuming)
+                self._stream_buf = ""
 
-                clean = self._strip_think(response.content)
-                if response.finish_reason == "error":
-                    logger.error("LLM returned error: {}", (clean or "")[:200])
-                    final_content = clean or "Sorry, I encountered an error calling the AI model."
-                    break
-                messages = self.context.add_assistant_message(
-                    messages,
-                    clean,
-                    reasoning_content=response.reasoning_content,
-                    thinking_blocks=response.thinking_blocks,
-                )
-                final_content = clean
-                break
+            async def after_iteration(self, context: AgentHookContext) -> None:
+                self._loop._last_usage = dict(context.usage)
 
-        if final_content is None and iteration >= self.max_iterations:
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
-            final_content = (
-                f"I reached the maximum number of tool call iterations ({self.max_iterations}) "
-                "without completing the task. You can try breaking the task into smaller steps."
+            def finalize_content(
+                self,
+                context: AgentHookContext,
+                content: str | None,
+            ) -> str | None:
+                return self._loop._strip_think(content)
+
+        result = await self.runner.run(
+            AgentRunSpec(
+                initial_messages=messages,
+                tools=_ScopedTools(self.tools, blocked_tools),
+                model=self.model,
+                max_iterations=self.max_iterations,
+                hook=_LoopHook(self, turn_start_index, on_stream, on_stream_end),
+                concurrent_tools=True,
             )
+        )
+        self._last_usage = dict(result.usage)
 
-        return final_content, tools_used, messages
+        if result.stop_reason == "error":
+            logger.error("LLM returned error: {}", (result.error or "")[:200])
+        elif result.stop_reason == "max_iterations":
+            logger.warning("Max iterations ({}) reached", self.max_iterations)
+
+        return result.final_content, result.tools_used, result.messages
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""

@@ -128,7 +128,7 @@ def test_onboard_help_shows_workspace_and_config_options():
     assert "--config" in stripped_output
     assert "-c" in stripped_output
     assert "--wizard" in stripped_output
-    assert "--dir" not in stripped_output
+    assert "--dir" in stripped_output
 
 
 def test_onboard_interactive_discard_does_not_save_or_create_workspace(mock_paths, monkeypatch):
@@ -196,6 +196,22 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
     assert f"nanobot gateway --config {resolved_config}" in compact_output
 
 
+def test_onboard_dir_sets_instance_config_and_workspace(tmp_path, monkeypatch):
+    instance_dir = tmp_path / "instance-a"
+    config_path = instance_dir / "config.json"
+    workspace_path = instance_dir / "workspace"
+
+    monkeypatch.setattr("nanobot.channels.registry.discover_all", lambda: {})
+
+    result = runner.invoke(app, ["onboard", "--dir", str(instance_dir)])
+
+    assert result.exit_code == 0
+    assert config_path.exists()
+    saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
+    assert saved.workspace_path == workspace_path
+    assert (workspace_path / "AGENTS.md").exists()
+
+
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():
     config = Config()
     config.agents.defaults.model = "github-copilot/gpt-5.3-codex"
@@ -208,6 +224,14 @@ def test_config_matches_openai_codex_with_hyphen_prefix():
     config.agents.defaults.model = "openai-codex/gpt-5.1-codex"
 
     assert config.get_provider_name() == "openai_codex"
+
+
+def test_config_matches_stepfun_prefix():
+    config = Config()
+    config.agents.defaults.model = "stepfun/step-2"
+    config.providers.stepfun.api_key = "test-key"
+
+    assert config.get_provider_name() == "stepfun"
 
 
 def test_config_dump_excludes_oauth_provider_blocks():

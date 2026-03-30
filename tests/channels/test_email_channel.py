@@ -1,13 +1,12 @@
-from email.message import EmailMessage
-from datetime import date
 import imaplib
+from datetime import date
+from email.message import EmailMessage
 
 import pytest
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.channels.email import EmailChannel
-from nanobot.channels.email import EmailConfig
+from nanobot.channels.email import EmailChannel, EmailConfig
 
 
 def _make_config() -> EmailConfig:
@@ -30,12 +29,15 @@ def _make_raw_email(
     from_addr: str = "alice@example.com",
     subject: str = "Hello",
     body: str = "This is the body.",
+    auth_results: str = "mx.example.com; spf=pass smtp.mailfrom=alice@example.com; dkim=pass",
 ) -> bytes:
     msg = EmailMessage()
     msg["From"] = from_addr
     msg["To"] = "bot@example.com"
     msg["Subject"] = subject
     msg["Message-ID"] = "<m1@example.com>"
+    if auth_results:
+        msg["Authentication-Results"] = auth_results
     msg.set_content(body)
     return msg.as_bytes()
 
@@ -75,12 +77,85 @@ def test_fetch_new_messages_parses_unseen_and_marks_seen(monkeypatch) -> None:
     assert len(items) == 1
     assert items[0]["sender"] == "alice@example.com"
     assert items[0]["subject"] == "Invoice"
+    assert items[0]["content"].startswith("[EMAIL-CONTEXT]")
     assert "Please pay" in items[0]["content"]
     assert fake.store_calls == [(b"1", "+FLAGS", "\\Seen")]
 
     # Same UID should be deduped in-process.
     items_again = channel._fetch_new_messages()
     assert items_again == []
+
+
+def test_fetch_new_messages_rejects_failed_authentication(monkeypatch) -> None:
+    raw = _make_raw_email(
+        subject="Invoice",
+        body="Please pay",
+        auth_results="mx.example.com; spf=fail smtp.mailfrom=alice@example.com; dkim=fail",
+    )
+
+    class FakeIMAP:
+        def login(self, _user: str, _pw: str):
+            return "OK", [b"logged in"]
+
+        def select(self, _mailbox: str):
+            return "OK", [b"1"]
+
+        def search(self, *_args):
+            return "OK", [b"1"]
+
+        def fetch(self, _imap_id: bytes, _parts: str):
+            return "OK", [(b"1 (UID 123 BODY[] {200})", raw), b")"]
+
+        def store(self, _imap_id: bytes, _op: str, _flags: str):
+            return "OK", [b""]
+
+        def logout(self):
+            return "BYE", [b""]
+
+    monkeypatch.setattr("nanobot.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: FakeIMAP())
+
+    channel = EmailChannel(_make_config(), MessageBus())
+    items = channel._fetch_new_messages()
+
+    assert items == []
+
+
+def test_fetch_new_messages_allows_auth_disabled(monkeypatch) -> None:
+    raw = _make_raw_email(
+        subject="Invoice",
+        body="Please pay",
+        auth_results="mx.example.com; spf=fail smtp.mailfrom=alice@example.com; dkim=fail",
+    )
+
+    class FakeIMAP:
+        def login(self, _user: str, _pw: str):
+            return "OK", [b"logged in"]
+
+        def select(self, _mailbox: str):
+            return "OK", [b"1"]
+
+        def search(self, *_args):
+            return "OK", [b"1"]
+
+        def fetch(self, _imap_id: bytes, _parts: str):
+            return "OK", [(b"1 (UID 123 BODY[] {200})", raw), b")"]
+
+        def store(self, _imap_id: bytes, _op: str, _flags: str):
+            return "OK", [b""]
+
+        def logout(self):
+            return "BYE", [b""]
+
+    monkeypatch.setattr("nanobot.channels.email.imaplib.IMAP4_SSL", lambda _h, _p: FakeIMAP())
+
+    cfg = _make_config()
+    cfg.verify_spf = False
+    cfg.verify_dkim = False
+    channel = EmailChannel(cfg, MessageBus())
+    items = channel._fetch_new_messages()
+
+    assert len(items) == 1
+    assert items[0]["sender"] == "alice@example.com"
 
 
 def test_fetch_new_messages_retries_once_when_imap_connection_goes_stale(monkeypatch) -> None:
@@ -286,6 +361,7 @@ async def test_send_uses_smtp_and_reply_subject(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_send_skips_reply_when_auto_reply_disabled(monkeypatch) -> None:
     """When auto_reply_enabled=False, replies should be skipped but proactive sends allowed."""
+
     class FakeSMTP:
         def __init__(self, _host: str, _port: int, timeout: int = 30) -> None:
             self.sent_messages: list[EmailMessage] = []
@@ -347,6 +423,7 @@ async def test_send_skips_reply_when_auto_reply_disabled(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_send_proactive_email_when_auto_reply_disabled(monkeypatch) -> None:
     """Proactive emails (not replies) should be sent even when auto_reply_enabled=False."""
+
     class FakeSMTP:
         def __init__(self, _host: str, _port: int, timeout: int = 30) -> None:
             self.sent_messages: list[EmailMessage] = []

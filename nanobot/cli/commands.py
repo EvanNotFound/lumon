@@ -257,10 +257,22 @@ def onboard(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
     wizard: bool = typer.Option(False, "--wizard", help="Use interactive wizard"),
+    instance_dir: str | None = typer.Option(
+        None,
+        "--dir",
+        help="Instance directory (defaults config/workspace under this path)",
+    ),
 ):
     """Initialize nanobot configuration and workspace."""
     from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
     from nanobot.config.schema import Config
+
+    if instance_dir:
+        instance_root = Path(instance_dir).expanduser().resolve()
+        if not config:
+            config = str(instance_root / "config.json")
+        if not workspace:
+            workspace = str(instance_root / "workspace")
 
     if config:
         config_path = Path(config).expanduser().resolve()
@@ -567,6 +579,7 @@ def gateway(
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
+        runtime_timezone=config.agents.defaults.timezone,
     )
 
     # Set cron callback (needs agent)
@@ -688,6 +701,7 @@ def gateway(
         on_notify=on_heartbeat_notify,
         interval_s=hb_cfg.interval_s,
         enabled=hb_cfg.enabled,
+        runtime_timezone=config.agents.defaults.timezone,
     )
 
     if channels.enabled_channels:
@@ -786,6 +800,7 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
+        runtime_timezone=config.agents.defaults.timezone,
     )
 
     # Shared reference for progress callbacks

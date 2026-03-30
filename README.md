@@ -640,6 +640,7 @@ Give Lumon AI its own email account. It polls **IMAP** for incoming mail and rep
 > - `allowFrom`: Add your email address. Use `["*"]` to accept emails from anyone.
 > - `smtpUseTls` and `smtpUseSsl` default to `true` / `false` respectively, which is correct for Gmail (port 587 + STARTTLS). No need to set them explicitly.
 > - Set `"autoReplyEnabled": false` if you only want to read/analyze emails without sending automatic replies.
+> - `verifySpf` and `verifyDkim` default to `true` and reject spoofed senders unless `Authentication-Results` shows `spf=pass` / `dkim=pass`.
 
 ```json
 {
@@ -656,7 +657,9 @@ Give Lumon AI its own email account. It polls **IMAP** for incoming mail and rep
       "smtpUsername": "my-nanobot@gmail.com",
       "smtpPassword": "your-app-password",
       "fromAddress": "my-nanobot@gmail.com",
-      "allowFrom": ["your-real-email@gmail.com"]
+      "allowFrom": ["your-real-email@gmail.com"],
+      "verifySpf": true,
+      "verifyDkim": true
     }
   }
 }
@@ -860,6 +863,7 @@ Config file: `~/.nanobot/config.json`
 > - **VolcEngine / BytePlus Coding Plan**: Use dedicated providers `volcengineCodingPlan` or `byteplusCodingPlan` instead of the pay-per-use `volcengine` / `byteplus` providers.
 > - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.
 > - **Alibaba Cloud BaiLian**: If you're using Alibaba Cloud BaiLian's OpenAI-compatible endpoint, set `"apiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1"` in your dashscope provider config.
+> - **Step Fun (Mainland China)**: If your key is from Step Fun (stepfun.com), use provider `stepfun` with `"apiBase": "https://api.stepfun.com/v1"`.
 
 | Provider | Purpose | Get API Key |
 |----------|---------|-------------|
@@ -879,6 +883,7 @@ Config file: `~/.nanobot/config.json`
 | `dashscope` | LLM (Qwen) | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
 | `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
 | `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| `stepfun` | LLM (Step Fun/阶跃星辰) | [platform.stepfun.com](https://platform.stepfun.com) |
 | `ollama` | LLM (local, Ollama) | — |
 | `mistral` | LLM | [docs.mistral.ai](https://docs.mistral.ai/) |
 | `ovms` | LLM (local, OpenVINO Model Server) | [docs.openvino.ai](https://docs.openvino.ai/2026/model-server/ovms_docs_llm_quickstart.html) |
@@ -1401,19 +1406,22 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 
 ## 🧩 Multiple Instances
 
-Run multiple nanobot instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. Optionally pass `--workspace` during `onboard` when you want to initialize or update the saved workspace for a specific instance.
+Run multiple nanobot instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. For onboarding, you can use either `--dir` (recommended) or explicit `--config` + `--workspace`.
 
 ### Quick Start
 
-If you want each instance to have its own dedicated workspace from the start, pass both `--config` and `--workspace` during onboarding.
+If you want each instance to have its own dedicated workspace from the start, use `--dir`.
 
 **Initialize instances:**
 
 ```bash
-# Create separate instance configs and workspaces
-nanobot onboard --config ~/.nanobot-telegram/config.json --workspace ~/.nanobot-telegram/workspace
-nanobot onboard --config ~/.nanobot-discord/config.json --workspace ~/.nanobot-discord/workspace
-nanobot onboard --config ~/.nanobot-feishu/config.json --workspace ~/.nanobot-feishu/workspace
+# Create separate instance configs and workspaces under each directory
+nanobot onboard --dir ~/.nanobot-telegram
+nanobot onboard --dir ~/.nanobot-discord
+nanobot onboard --dir ~/.nanobot-feishu
+
+# Equivalent explicit form:
+# nanobot onboard --config ~/.nanobot-telegram/config.json --workspace ~/.nanobot-telegram/workspace
 ```
 
 **Configure each instance:**
@@ -1523,6 +1531,7 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 |---------|-------------|
 | `nanobot onboard` | Initialize config & workspace at `~/.nanobot/` |
 | `nanobot onboard --wizard` | Launch the interactive onboarding wizard |
+| `nanobot onboard --dir <dir>` | Initialize instance config/workspace under `<dir>` |
 | `nanobot onboard -c <config> -w <workspace>` | Initialize or refresh a specific instance config and workspace |
 | `nanobot agent -m "..."` | Chat with the agent |
 | `nanobot agent -w <workspace>` | Chat against a specific workspace |

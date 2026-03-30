@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import tiktoken
 from loguru import logger
@@ -58,11 +59,23 @@ def timestamp() -> str:
     return datetime.now().isoformat()
 
 
-def current_time_str() -> str:
-    """Human-readable current time with weekday and timezone, e.g. '2026-03-15 22:30 (Saturday) (CST)'."""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-    tz = time.strftime("%Z") or "UTC"
-    return f"{now} ({tz})"
+def current_time_str(timezone_name: str | None = None) -> str:
+    """Human-readable current time with weekday and timezone label."""
+    if timezone_name:
+        try:
+            now = datetime.now(ZoneInfo(timezone_name))
+            tz = timezone_name
+        except ZoneInfoNotFoundError:
+            logger.warning(
+                "Unknown runtime timezone '{}', falling back to local timezone",
+                timezone_name,
+            )
+            now = datetime.now().astimezone()
+            tz = now.tzname() or time.strftime("%Z") or "UTC"
+    else:
+        now = datetime.now().astimezone()
+        tz = now.tzname() or time.strftime("%Z") or "UTC"
+    return f"{now.strftime('%Y-%m-%d %H:%M (%A)')} ({tz})"
 
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')

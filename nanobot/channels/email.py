@@ -50,6 +50,8 @@ class EmailConfig(Base):
     max_body_chars: int = 12000
     subject_prefix: str = "Re: "
     allow_from: list[str] = Field(default_factory=list)
+    verify_dkim: bool = True  # Require Authentication-Results with dkim=pass
+    verify_spf: bool = True  # Require Authentication-Results with spf=pass
 
 
 class EmailChannel(BaseChannel):
@@ -123,6 +125,11 @@ class EmailChannel(BaseChannel):
             return
 
         self._running = True
+        if not self.config.verify_dkim and not self.config.verify_spf:
+            logger.warning(
+                "Email channel: DKIM and SPF verification are both disabled. "
+                "Spoofed sender headers may be accepted."
+            )
         logger.info("Starting Email channel (IMAP polling mode)...")
 
         poll_seconds = max(5, int(self.config.poll_interval_seconds))
@@ -186,7 +193,9 @@ class EmailChannel(BaseChannel):
                 subject = override
 
         email_msg = EmailMessage()
-        email_msg["From"] = self.config.from_address or self.config.smtp_username or self.config.imap_username
+        email_msg["From"] = (
+            self.config.from_address or self.config.smtp_username or self.config.imap_username
+        )
         email_msg["To"] = to_addr
         email_msg["Subject"] = subject
         email_msg.set_content(msg.content or "")
@@ -218,7 +227,7 @@ class EmailChannel(BaseChannel):
             missing.append("smtp_password")
 
         if missing:
-            logger.error("Email channel not configured, missing: {}", ', '.join(missing))
+            logger.error("Email channel not configured, missing: {}", ", ".join(missing))
             return False
         return True
 
@@ -326,11 +335,15 @@ class EmailChannel(BaseChannel):
                 status, _ = client.select(mailbox)
             except Exception as exc:
                 if self._is_missing_mailbox_error(exc):
-                    logger.warning("Email mailbox unavailable, skipping poll for {}: {}", mailbox, exc)
+                    logger.warning(
+                        "Email mailbox unavailable, skipping poll for {}: {}", mailbox, exc
+                    )
                     return messages
                 raise
             if status != "OK":
-                logger.warning("Email mailbox select returned {}, skipping poll for {}", status, mailbox)
+                logger.warning(
+                    "Email mailbox select returned {}, skipping poll for {}", status, mailbox
+                )
                 return messages
 
             status, data = client.search(None, *search_criteria)
@@ -360,6 +373,22 @@ class EmailChannel(BaseChannel):
                 if not sender:
                     continue
 
+                spf_pass, dkim_pass = self._check_authentication_results(parsed)
+                if self.config.verify_spf and not spf_pass:
+                    logger.warning(
+                        "Email from {} rejected: SPF verification failed "
+                        "(no 'spf=pass' in Authentication-Results header)",
+                        sender,
+                    )
+                    continue
+                if self.config.verify_dkim and not dkim_pass:
+                    logger.warning(
+                        "Email from {} rejected: DKIM verification failed "
+                        "(no 'dkim=pass' in Authentication-Results header)",
+                        sender,
+                    )
+                    continue
+
                 subject = self._decode_header_value(parsed.get("Subject", ""))
                 date_value = parsed.get("Date", "")
                 message_id = parsed.get("Message-ID", "").strip()
@@ -370,7 +399,7 @@ class EmailChannel(BaseChannel):
 
                 body = body[: self.config.max_body_chars]
                 content = (
-                    f"Email received.\n"
+                    f"[EMAIL-CONTEXT] Email received.\n"
                     f"From: {sender}\n"
                     f"Subject: {subject}\n"
                     f"Date: {date_value}\n\n"
@@ -401,7 +430,9 @@ class EmailChannel(BaseChannel):
                     # mark_seen is the primary dedup; this set is a safety net
                     if len(self._processed_uids) > self._MAX_PROCESSED_UIDS:
                         # Evict a random half to cap memory; mark_seen is the primary dedup
-                        self._processed_uids = set(list(self._processed_uids)[len(self._processed_uids) // 2:])
+                        self._processed_uids = set(
+                            list(self._processed_uids)[len(self._processed_uids) // 2 :]
+                        )
 
                 if mark_seen:
                     client.store(imap_id, "+FLAGS", "\\Seen")
@@ -430,7 +461,11 @@ class EmailChannel(BaseChannel):
     @staticmethod
     def _extract_message_bytes(fetched: list[Any]) -> bytes | None:
         for item in fetched:
-            if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+            if (
+                isinstance(item, tuple)
+                and len(item) >= 2
+                and isinstance(item[1], (bytes, bytearray))
+            ):
                 return bytes(item[1])
         return None
 
@@ -499,6 +534,19 @@ class EmailChannel(BaseChannel):
         text = re.sub(r"<\s*/\s*p\s*>", "\n", text, flags=re.IGNORECASE)
         text = re.sub(r"<[^>]+>", "", text)
         return html.unescape(text)
+
+    @staticmethod
+    def _check_authentication_results(parsed_msg: Any) -> tuple[bool, bool]:
+        """Parse Authentication-Results headers for SPF and DKIM verdicts."""
+        spf_pass = False
+        dkim_pass = False
+        for ar_header in parsed_msg.get_all("Authentication-Results") or []:
+            ar_lower = ar_header.lower()
+            if re.search(r"\bspf\s*=\s*pass\b", ar_lower):
+                spf_pass = True
+            if re.search(r"\bdkim\s*=\s*pass\b", ar_lower):
+                dkim_pass = True
+        return spf_pass, dkim_pass
 
     def _reply_subject(self, base_subject: str) -> str:
         subject = (base_subject or "").strip() or "nanobot reply"
