@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
@@ -35,6 +36,8 @@ _HEARTBEAT_TOOL = [
         },
     }
 ]
+
+_HEARTBEAT_CONTROL_RE = re.compile(r"^HEARTBEAT_[A-Z0-9_]+$")
 
 
 class HeartbeatService:
@@ -82,6 +85,19 @@ class HeartbeatService:
                 return None
         return None
 
+    @staticmethod
+    def _is_control_output(text: str | None) -> bool:
+        """Return whether *text* is a raw heartbeat control token."""
+        if not isinstance(text, str):
+            return False
+        normalized = text.strip()
+        if not normalized:
+            return False
+        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
+            normalized = normalized[1:-1].strip()
+        normalized = normalized.replace("`", "").strip().upper()
+        return bool(_HEARTBEAT_CONTROL_RE.fullmatch(normalized))
+
     async def _decide(self, content: str) -> tuple[str, str]:
         """Phase 1: ask LLM to decide skip/run via virtual tool call.
 
@@ -91,12 +107,18 @@ class HeartbeatService:
 
         response = await self.provider.chat_with_retry(
             messages=[
-                {"role": "system", "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision."},
-                {"role": "user", "content": (
-                    f"Current Time: {current_time_str()}\n\n"
-                    "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
-                    f"{content}"
-                )},
+                {
+                    "role": "system",
+                    "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current Time: {current_time_str()}\n\n"
+                        "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
+                        f"{content}"
+                    ),
+                },
             ],
             tools=_HEARTBEAT_TOOL,
             model=self.model,
@@ -162,9 +184,16 @@ class HeartbeatService:
             if self.on_execute:
                 response = await self.on_execute(tasks)
 
+                if self._is_control_output(response):
+                    logger.info("Heartbeat: suppressed control output")
+                    return
+
                 if response:
                     should_notify = await evaluate_response(
-                        response, tasks, self.provider, self.model,
+                        response,
+                        tasks,
+                        self.provider,
+                        self.model,
                     )
                     if should_notify and self.on_notify:
                         logger.info("Heartbeat: completed, delivering response")
@@ -182,4 +211,7 @@ class HeartbeatService:
         action, tasks = await self._decide(content)
         if action != "run" or not self.on_execute:
             return None
-        return await self.on_execute(tasks)
+        response = await self.on_execute(tasks)
+        if response and self._is_control_output(response):
+            return None
+        return response
