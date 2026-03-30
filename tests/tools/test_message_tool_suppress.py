@@ -94,6 +94,49 @@ class TestMessageToolSuppressLogic:
         assert result.channel == "feishu"
 
     @pytest.mark.asyncio
+    async def test_disabled_message_tool_prevents_direct_send(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(
+            id="call1",
+            name="message",
+            arguments={"content": "HEARTBEAT_OK", "channel": "telegram", "chat_id": "123"},
+        )
+        calls = iter(
+            [
+                LLMResponse(content="", tool_calls=[tool_call]),
+                LLMResponse(content="Done", tool_calls=[]),
+            ]
+        )
+
+        captured_tool_sets: list[set[str]] = []
+
+        async def _chat_with_retry(*_args, **kwargs):
+            tools = kwargs.get("tools") or []
+            captured_tool_sets.append({(t.get("function") or {}).get("name", "") for t in tools})
+            return next(calls)
+
+        loop.provider.chat_with_retry = AsyncMock(side_effect=_chat_with_retry)
+
+        sent: list[OutboundMessage] = []
+        mt = loop.tools.get("message")
+        if isinstance(mt, MessageTool):
+            mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        result = await loop.process_direct(
+            "Send heartbeat update",
+            session_key="heartbeat",
+            channel="telegram",
+            chat_id="123",
+            disabled_tools={"message"},
+        )
+
+        assert captured_tool_sets
+        assert "message" not in captured_tool_sets[0]
+        assert sent == []
+        assert result is not None
+        assert result.content == "Done"
+
+    @pytest.mark.asyncio
     async def test_not_suppress_when_no_message_tool_used(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)
         loop.provider.chat_with_retry = AsyncMock(

@@ -657,6 +657,7 @@ def gateway(
             channel=channel,
             chat_id=chat_id,
             on_progress=_silent,
+            disabled_tools={"message"},
         )
 
         # Keep a small tail of heartbeat history so the loop stays bounded

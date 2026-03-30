@@ -258,6 +258,7 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        disabled_tools: set[str] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
 
@@ -271,6 +272,7 @@ class AgentLoop:
         final_content = None
         tools_used: list[str] = []
         turn_start_index = len(initial_messages) - 1
+        blocked_tools = {name for name in (disabled_tools or set()) if name}
 
         # Wrap on_stream with stateful think-tag filter so downstream
         # consumers (CLI, channels) never see <think> blocks.
@@ -292,6 +294,12 @@ class AgentLoop:
             iteration += 1
 
             tool_defs = self.tools.get_definitions()
+            if blocked_tools:
+                tool_defs = [
+                    td
+                    for td in tool_defs
+                    if ((td.get("function") or {}).get("name") not in blocked_tools)
+                ]
 
             send_messages = self._trim_history_for_budget(
                 messages,
@@ -354,8 +362,16 @@ class AgentLoop:
                 # independent calls in a single response on purpose.
                 # return_exceptions=True ensures all results are collected
                 # even if one tool is cancelled or raises BaseException.
+                async def _disabled_tool_result(tool_name: str) -> str:
+                    return f"Error: Tool '{tool_name}' is disabled in this context"
+
                 results = await asyncio.gather(
-                    *(self.tools.execute(tc.name, tc.arguments) for tc in response.tool_calls),
+                    *(
+                        _disabled_tool_result(tc.name)
+                        if tc.name in blocked_tools
+                        else self.tools.execute(tc.name, tc.arguments)
+                        for tc in response.tool_calls
+                    ),
                     return_exceptions=True,
                 )
 
@@ -525,6 +541,7 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        disabled_tools: set[str] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         # System messages: parse origin from chat_id ("channel:chat_id")
@@ -551,6 +568,7 @@ class AgentLoop:
                 channel=channel,
                 chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                disabled_tools=disabled_tools,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -611,6 +629,7 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
+            disabled_tools=disabled_tools,
         )
 
         if final_content is None:
@@ -726,6 +745,7 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        disabled_tools: set[str] | None = None,
     ) -> OutboundMessage | None:
         """Process a message directly and return the outbound payload."""
         await self._connect_mcp()
@@ -736,4 +756,5 @@ class AgentLoop:
             on_progress=on_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
+            disabled_tools=disabled_tools,
         )
