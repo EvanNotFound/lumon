@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -72,17 +71,8 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
-    _EXPLICIT_MEMORY_PATTERNS = (
-        re.compile(r"\bremember (?:this|that|it)\b", re.IGNORECASE),
-        re.compile(r"\bplease remember\b", re.IGNORECASE),
-        re.compile(r"\bdon't forget\b", re.IGNORECASE),
-        re.compile(r"\bdo not forget\b", re.IGNORECASE),
-        re.compile(r"\bfrom now on\b", re.IGNORECASE),
-        re.compile(r"\bwhen i say\b", re.IGNORECASE),
-        re.compile(r"\bif i say\b", re.IGNORECASE),
-        re.compile(r"\bstore this\b", re.IGNORECASE),
-        re.compile(r"\bsave this\b", re.IGNORECASE),
-    )
+    _MEMORY_RETRIEVAL_HISTORY_LIMIT = 6
+    _MEMORY_RETRIEVAL_MAX_CHARS = 400
 
     def __init__(
         self,
@@ -414,12 +404,48 @@ class AgentLoop:
         )
 
     @classmethod
-    def _should_eager_persist_memory(cls, message: str) -> bool:
-        """Detect explicit memory directives that should persist immediately."""
-        text = (message or "").strip()
-        if not text:
-            return False
-        return any(pattern.search(text) for pattern in cls._EXPLICIT_MEMORY_PATTERNS)
+    def _flatten_memory_retrieval_content(cls, content: Any) -> str:
+        """Convert message content into compact text for memory retrieval."""
+        if isinstance(content, str):
+            compact = " ".join(content.split())
+            return compact[: cls._MEMORY_RETRIEVAL_MAX_CHARS]
+
+        if not isinstance(content, list):
+            return ""
+
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+            elif block.get("type") == "image_url":
+                parts.append("[image]")
+
+        compact = " ".join(" ".join(parts).split())
+        return compact[: cls._MEMORY_RETRIEVAL_MAX_CHARS]
+
+    @classmethod
+    def _build_memory_retrieval_query(
+        cls, history: list[dict[str, Any]], current_message: str
+    ) -> str:
+        """Build a retrieval query from recent conversational context plus the current turn."""
+        lines: list[str] = []
+        recent = [message for message in history if message.get("role") in {"user", "assistant"}][
+            -cls._MEMORY_RETRIEVAL_HISTORY_LIMIT :
+        ]
+
+        for message in recent:
+            text = cls._flatten_memory_retrieval_content(message.get("content"))
+            if not text:
+                continue
+            lines.append(f"{str(message.get('role', 'user')).upper()}: {text}")
+
+        current = " ".join((current_message or "").split())
+        if current:
+            lines.append(f"USER: {current[: cls._MEMORY_RETRIEVAL_MAX_CHARS]}")
+
+        return "\n".join(lines)
 
     async def _run_agent_loop(
         self,
@@ -705,9 +731,10 @@ class AgentLoop:
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            await self.context.memory.prepare_prompt_memory(msg.content)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=0)
+            retrieval_query = self._build_memory_retrieval_query(history, msg.content)
+            await self.context.memory.prepare_prompt_memory(retrieval_query)
+            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
@@ -744,16 +771,16 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
-        eager_memory = self._should_eager_persist_memory(msg.content)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-        await self.context.memory.prepare_prompt_memory(msg.content)
+        history = session.get_history(max_messages=0)
+        retrieval_query = self._build_memory_retrieval_query(history, msg.content)
+        await self.context.memory.prepare_prompt_memory(retrieval_query)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
-        history = session.get_history(max_messages=0)
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
@@ -793,12 +820,13 @@ class AgentLoop:
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
 
-        if eager_memory and final_content:
+        if final_content:
             eager_chunk: list[dict[str, object]] = [
                 {"role": "user", "content": msg.content},
                 {"role": "assistant", "content": final_content},
             ]
-            await self.memory_consolidator.archive_messages(eager_chunk)
+            if await self.memory_consolidator.should_eager_persist_turn(eager_chunk):
+                await self.memory_consolidator.archive_messages(eager_chunk)
 
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 

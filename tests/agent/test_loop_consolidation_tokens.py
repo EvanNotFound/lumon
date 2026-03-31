@@ -5,7 +5,7 @@ import pytest
 import nanobot.agent.memory as memory_module
 from nanobot.agent.loop import AgentLoop
 from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
 def _make_loop(tmp_path, *, estimated_tokens: int, context_window_tokens: int) -> AgentLoop:
@@ -212,23 +212,93 @@ async def test_preflight_consolidation_before_llm_call(tmp_path, monkeypatch) ->
 async def test_prepare_prompt_memory_uses_current_message(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
     loop.context.memory.prepare_prompt_memory = AsyncMock()  # type: ignore[method-assign]
+    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
-    await loop.process_direct("remember this preference", session_key="cli:test")
+    session = loop.sessions.get_or_create("cli:test")
+    session.messages = [
+        {"role": "user", "content": "oldest", "timestamp": "2026-01-01T00:00:00"},
+        {"role": "assistant", "content": "keep1", "timestamp": "2026-01-01T00:00:01"},
+        {"role": "user", "content": "keep2", "timestamp": "2026-01-01T00:00:02"},
+        {"role": "assistant", "content": "keep3", "timestamp": "2026-01-01T00:00:03"},
+        {"role": "user", "content": "keep4", "timestamp": "2026-01-01T00:00:04"},
+        {"role": "assistant", "content": "keep5", "timestamp": "2026-01-01T00:00:05"},
+        {"role": "user", "content": "keep6", "timestamp": "2026-01-01T00:00:06"},
+    ]
+    loop.sessions.save(session)
 
-    loop.context.memory.prepare_prompt_memory.assert_awaited_once_with("remember this preference")
+    await loop.process_direct("current message", session_key="cli:test")
+
+    loop.context.memory.prepare_prompt_memory.assert_awaited_once()
+    retrieval_query = loop.context.memory.prepare_prompt_memory.await_args.args[0]
+    assert "oldest" not in retrieval_query
+    for value in ("keep1", "keep2", "keep3", "keep4", "keep5", "keep6", "current message"):
+        assert value in retrieval_query
 
 
 @pytest.mark.asyncio
-async def test_explicit_memory_directive_triggers_immediate_archive(tmp_path) -> None:
+async def test_model_memory_decision_triggers_immediate_archive(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=True)  # type: ignore[method-assign]
     loop.memory_consolidator.archive_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
-    await loop.process_direct("when i say test123, say test321", session_key="cli:test")
+    await loop.process_direct("my online handle is evannotfound", session_key="cli:test")
 
     loop.memory_consolidator.archive_messages.assert_awaited_once()
     await_args = loop.memory_consolidator.archive_messages.await_args
     assert await_args is not None
     archived_chunk = await_args.args[0]
     assert archived_chunk[0]["role"] == "user"
-    assert "test123" in archived_chunk[0]["content"]
+    assert "evannotfound" in archived_chunk[0]["content"]
     assert archived_chunk[1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_model_memory_decision_false_skips_immediate_archive(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop.memory_consolidator.archive_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    await loop.process_direct("hello", session_key="cli:test")
+
+    loop.memory_consolidator.archive_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_memory_decision_returns_true_from_tool_call(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallRequest(
+                    id="call_1",
+                    name="memory_decision",
+                    arguments={"should_persist": True, "reason": "durable user identity fact"},
+                )
+            ],
+        )
+    )
+
+    result = await loop.memory_consolidator.should_eager_persist_turn(
+        [
+            {"role": "user", "content": "my handle is evannotfound"},
+            {"role": "assistant", "content": "I'll remember that."},
+        ]
+    )
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_model_memory_decision_without_tool_call_defaults_false(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="no", tool_calls=[]))
+
+    result = await loop.memory_consolidator.should_eager_persist_turn(
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+    )
+
+    assert result is False

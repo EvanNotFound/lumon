@@ -48,6 +48,46 @@ _SAVE_MEMORY_TOOL = [
     }
 ]
 
+_MEMORY_DECISION_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_decision",
+            "description": "Decide whether a completed exchange should be persisted immediately as durable memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "should_persist": {
+                        "type": "boolean",
+                        "description": "true when the exchange contains durable information worth persisting immediately; false for transient or low-value exchanges.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Short explanation of the decision.",
+                    },
+                },
+                "required": ["should_persist"],
+            },
+        },
+    }
+]
+
+_MEMORY_DECISION_SYSTEM_PROMPT = """You are a durable-memory gate for an assistant.
+
+Call the memory_decision tool to decide whether the completed exchange should be persisted immediately.
+
+Persist exchanges that contain durable information such as:
+- stable user identity facts, aliases, handles, or preferences
+- lasting communication or behavior rules
+- recurring mappings or personalized instructions
+- long-lived project context or relationships likely to matter later
+
+Do not persist exchanges that are mainly:
+- one-off chatter or acknowledgements
+- transient task details or temporary troubleshooting
+- routine back-and-forth with no durable takeaway
+- low-value wording noise that does not affect future behavior"""
+
 
 def _ensure_text(value: Any) -> str:
     """Normalize tool-call payload values to text for file storage."""
@@ -332,6 +372,70 @@ class MemoryConsolidator:
             if await self.consolidate_messages(messages):
                 return True
         return True
+
+    async def should_eager_persist_turn(self, messages: list[dict[str, object]]) -> bool:
+        """Use the model to judge whether a completed exchange deserves immediate persistence."""
+        if not messages:
+            return False
+
+        prompt = f"""Review this completed exchange and call the memory_decision tool.
+
+## Exchange
+{self.store._format_messages(messages)}"""
+
+        try:
+            forced = {"type": "function", "function": {"name": "memory_decision"}}
+            response = await self.provider.chat_with_retry(
+                messages=[
+                    {"role": "system", "content": _MEMORY_DECISION_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=_MEMORY_DECISION_TOOL,
+                model=self.model,
+                tool_choice=forced,
+                max_tokens=256,
+                temperature=0.0,
+            )
+
+            if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
+                logger.warning(
+                    "Forced tool_choice unsupported for memory_decision, retrying with auto"
+                )
+                response = await self.provider.chat_with_retry(
+                    messages=[
+                        {"role": "system", "content": _MEMORY_DECISION_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    tools=_MEMORY_DECISION_TOOL,
+                    model=self.model,
+                    tool_choice="auto",
+                    max_tokens=256,
+                    temperature=0.0,
+                )
+
+            if not response.has_tool_calls:
+                logger.warning(
+                    "Memory decision: LLM did not call memory_decision (finish_reason={}, content_preview={})",
+                    response.finish_reason,
+                    (response.content or "")[:200],
+                )
+                return False
+
+            args = _normalize_save_memory_args(response.tool_calls[0].arguments)
+            if args is None or "should_persist" not in args:
+                logger.warning("Memory decision: unexpected memory_decision arguments")
+                return False
+
+            should_persist = bool(args.get("should_persist"))
+            logger.info(
+                "Memory decision: should_persist={}, reason={}",
+                should_persist,
+                _ensure_text(args.get("reason", ""))[:200],
+            )
+            return should_persist
+        except Exception:
+            logger.exception("Memory decision failed")
+            return False
 
     async def maybe_consolidate_by_tokens(self, session: Session) -> None:
         """Loop: archive old messages until prompt fits within safe budget.
