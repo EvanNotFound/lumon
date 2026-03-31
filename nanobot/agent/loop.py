@@ -756,9 +756,11 @@ class AgentLoop:
             await self.context.memory.load_prompt_memory(retrieval_query)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
+            skill_names = self.context.skills.match_message_skills(msg.content)
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content,
+                skill_names=skill_names,
                 channel=channel,
                 chat_id=chat_id,
                 current_role=current_role,
@@ -804,9 +806,11 @@ class AgentLoop:
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
+        skill_names = self.context.skills.match_message_skills(msg.content)
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
+            skill_names=skill_names,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,

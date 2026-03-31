@@ -34,10 +34,17 @@ class ContextBuilder:
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
+        requested_skills = list(dict.fromkeys(skill_names or []))
 
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
-            parts.append(bootstrap)
+            parts.append(
+                "# Workspace Bootstrap\n\n"
+                "The following workspace files are already embedded below. Do not spend tool calls rereading "
+                "AGENTS.md, SOUL.md, USER.md, or TOOLS.md unless the user asks for the file contents or you need "
+                "fresh on-disk state.\n\n"
+                f"{bootstrap}"
+            )
 
         memory = self.memory.get_memory_context()
         if memory:
@@ -46,16 +53,23 @@ class ContextBuilder:
         always_skills = self.skills.get_always_skills()
         if self.memory.is_supermemory():
             always_skills = [name for name in always_skills if name != "memory"]
-        if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
+        active_skill_names = list(dict.fromkeys(always_skills + requested_skills))
+        if active_skill_names:
+            active_content = self.skills.load_skills_for_context(active_skill_names)
+            if active_content:
+                parts.append(
+                    "# Active Skills\n\n"
+                    "These skills are already loaded into the prompt. Use their instructions directly instead of "
+                    "reading their SKILL.md files again unless you need fresh on-disk contents.\n\n"
+                    f"{active_content}"
+                )
 
-        skills_summary = self.skills.build_skills_summary()
+        skills_summary = self.skills.build_skills_summary(set(active_skill_names))
         if skills_summary:
             parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+The following skills extend your capabilities. Active skills are already loaded above. Only read a SKILL.md file
+with the read_file tool when you need a skill that is not already active or when you need fresh on-disk contents.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
 {skills_summary}""")

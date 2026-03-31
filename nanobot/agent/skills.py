@@ -41,7 +41,9 @@ class SkillsLoader:
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
+                        skills.append(
+                            {"name": skill_dir.name, "path": str(skill_file), "source": "workspace"}
+                        )
 
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
@@ -49,7 +51,9 @@ class SkillsLoader:
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
+                        skills.append(
+                            {"name": skill_dir.name, "path": str(skill_file), "source": "builtin"}
+                        )
 
         # Filter by requirements
         if filter_unavailable:
@@ -90,7 +94,11 @@ class SkillsLoader:
             Formatted skills content.
         """
         parts = []
+        seen: set[str] = set()
         for name in skill_names:
+            if name in seen:
+                continue
+            seen.add(name)
             content = self.load_skill(name)
             if content:
                 content = self._strip_frontmatter(content)
@@ -98,7 +106,24 @@ class SkillsLoader:
 
         return "\n\n---\n\n".join(parts) if parts else ""
 
-    def build_skills_summary(self) -> str:
+    @staticmethod
+    def _split_csv_field(value: object) -> list[str]:
+        if not isinstance(value, str):
+            return []
+        return [part.strip().lower() for part in value.split(",") if part.strip()]
+
+    def match_message_skills(self, message: str) -> list[str]:
+        """Return skills whose frontmatter triggers match the message."""
+        lowered = " ".join(message.lower().split())
+        matches: list[str] = []
+        for skill in self.list_skills(filter_unavailable=True):
+            meta = self.get_skill_metadata(skill["name"]) or {}
+            triggers = self._split_csv_field(meta.get("triggers"))
+            if any(trigger in lowered for trigger in triggers):
+                matches.append(skill["name"])
+        return matches
+
+    def build_skills_summary(self, exclude_names: set[str] | None = None) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
 
@@ -108,7 +133,12 @@ class SkillsLoader:
         Returns:
             XML-formatted skills summary.
         """
-        all_skills = self.list_skills(filter_unavailable=False)
+        excluded = exclude_names or set()
+        all_skills = [
+            skill
+            for skill in self.list_skills(filter_unavailable=False)
+            if skill["name"] not in excluded
+        ]
         if not all_skills:
             return ""
 
@@ -123,7 +153,7 @@ class SkillsLoader:
             skill_meta = self._get_skill_meta(s["name"])
             available = self._check_requirements(skill_meta)
 
-            lines.append(f"  <skill available=\"{str(available).lower()}\">")
+            lines.append(f'  <skill available="{str(available).lower()}">')
             lines.append(f"    <name>{name}</name>")
             lines.append(f"    <description>{desc}</description>")
             lines.append(f"    <location>{path}</location>")
@@ -163,7 +193,7 @@ class SkillsLoader:
         if content.startswith("---"):
             match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
             if match:
-                return content[match.end():].strip()
+                return content[match.end() :].strip()
         return content
 
     def _parse_nanobot_metadata(self, raw: str) -> dict:
@@ -222,7 +252,7 @@ class SkillsLoader:
                 for line in match.group(1).split("\n"):
                     if ":" in line:
                         key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
+                        metadata[key.strip()] = value.strip().strip("\"'")
                 return metadata
 
         return None
