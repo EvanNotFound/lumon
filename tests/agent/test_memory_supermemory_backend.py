@@ -61,3 +61,10 @@ async def test_supermemory_backend_persists_snapshot_and_history(tmp_path: Path)
     assert store.read_long_term() == "# Memory\nLaunch owner: Alice"
     assert not store.history_file.exists()
     assert not (tmp_path / "memory").exists()
+
+    first_call = store._backend._supermemory_add_memory.await_args_list[0]  # type: ignore[attr-defined]
+    assert first_call.kwargs["custom_id"] == store._backend._snapshot_custom_id()  # type: ignore[attr-defined]
+    assert first_call.kwargs["metadata"]["snapshot_key"] == store._backend._snapshot_custom_id()  # type: ignore[attr-defined]
+
+    second_call = store._backend._supermemory_add_memory.await_args_list[1]  # type: ignore[attr-defined]
+    assert second_call.kwargs.get("custom_id") is None

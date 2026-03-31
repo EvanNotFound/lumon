@@ -60,6 +60,10 @@ class SupermemoryMemoryBackend:
         digest = hashlib.sha1(workspace_key.encode("utf-8")).hexdigest()[:16]
         return f"nanobot-workspace-{digest}"
 
+    def _snapshot_custom_id(self) -> str:
+        digest = hashlib.sha1(self._container_tag().encode("utf-8")).hexdigest()[:20]
+        return f"nanobot-snapshot-{digest}"
+
     def _build_supermemory_client(self) -> Any | None:
         api_key = self.config.supermemory.api_key.strip()
         if not api_key:
@@ -216,6 +220,7 @@ class SupermemoryMemoryBackend:
         *,
         content: str,
         metadata: dict[str, Any],
+        custom_id: str | None = None,
     ) -> dict[str, Any] | None:
         tag = self._container_tag()
 
@@ -225,17 +230,29 @@ class SupermemoryMemoryBackend:
                 logger.warning("Supermemory SDK does not expose add")
                 return None
 
-            try:
-                return await self._await_if_needed(
-                    add_fn(content=content, container_tag=tag, metadata=metadata)
-                )
-            except TypeError:
+            base_variants = [
+                {"container_tag": tag, "metadata": metadata},
+                {"container_tags": [tag], "metadata": metadata},
+                {"container_tag": tag},
+                {"container_tags": [tag]},
+            ]
+
+            for base_kwargs in base_variants:
+                if custom_id:
+                    for key in ("custom_id", "customId"):
+                        kwargs = {**base_kwargs, key: custom_id}
+                        try:
+                            return await self._await_if_needed(add_fn(content=content, **kwargs))
+                        except TypeError:
+                            continue
+
                 try:
-                    return await self._await_if_needed(
-                        add_fn(content=content, container_tags=[tag], metadata=metadata)
-                    )
+                    return await self._await_if_needed(add_fn(content=content, **base_kwargs))
                 except TypeError:
-                    return await self._await_if_needed(add_fn(content=content, container_tag=tag))
+                    continue
+
+            logger.warning("Supermemory add failed for all supported call shapes")
+            return None
 
         result = await self._with_supermemory_client("add", _run)
         if result is None:
@@ -352,18 +369,34 @@ class SupermemoryMemoryBackend:
         if memories is None:
             return
 
+        snapshot_custom_id = self._snapshot_custom_id()
+        fallback_snapshot: dict[str, Any] | None = None
+
         for memory in memories:
             metadata = memory.get("metadata")
             if not isinstance(metadata, dict) or metadata.get("kind") != "snapshot":
                 continue
 
-            content = memory.get("content")
-            if isinstance(content, str) and content.strip():
-                self._remote_long_term = content
-            doc_id = memory.get("id")
-            if isinstance(doc_id, str) and doc_id:
-                self._snapshot_id = doc_id
+            memory_custom_id = memory.get("customId") or memory.get("custom_id")
+            if (
+                memory_custom_id == snapshot_custom_id
+                or metadata.get("snapshot_key") == snapshot_custom_id
+            ):
+                fallback_snapshot = memory
+                break
+
+            if fallback_snapshot is None:
+                fallback_snapshot = memory
+
+        if fallback_snapshot is None:
             return
+
+        content = fallback_snapshot.get("content")
+        if isinstance(content, str) and content.strip():
+            self._remote_long_term = content
+        doc_id = fallback_snapshot.get("id")
+        if isinstance(doc_id, str) and doc_id:
+            self._snapshot_id = doc_id
 
     async def _supermemory_add_history(self, entry: str, *, raw: bool = False) -> bool:
         payload = {
@@ -376,10 +409,12 @@ class SupermemoryMemoryBackend:
         return result is not None
 
     async def _supermemory_upsert_snapshot(self, content: str) -> bool:
+        snapshot_custom_id = self._snapshot_custom_id()
         metadata = {
             "kind": "snapshot",
             "source": "nanobot",
             "workspace": self._container_tag(),
+            "snapshot_key": snapshot_custom_id,
         }
         if self._snapshot_id:
             if await self._supermemory_update_memory(
@@ -387,16 +422,26 @@ class SupermemoryMemoryBackend:
                 content=content,
                 metadata=metadata,
             ):
+                logger.debug("Supermemory snapshot updated: id={}", self._snapshot_id)
                 return True
             logger.warning("Supermemory snapshot update failed; retrying as create")
 
-        created = await self._supermemory_add_memory(content=content, metadata=metadata)
+        created = await self._supermemory_add_memory(
+            content=content,
+            metadata=metadata,
+            custom_id=snapshot_custom_id,
+        )
         if created is None:
             return False
 
         doc_id = created.get("id") if isinstance(created, dict) else None
         if isinstance(doc_id, str) and doc_id:
             self._snapshot_id = doc_id
+        logger.debug(
+            "Supermemory snapshot created: id={}, custom_id={}",
+            self._snapshot_id or "?",
+            snapshot_custom_id,
+        )
         return True
 
     async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
@@ -407,6 +452,11 @@ class SupermemoryMemoryBackend:
             self._remote_long_term = memory_update
         if not await self._supermemory_add_history(history_entry):
             return False
+        logger.debug(
+            "Supermemory consolidation persisted for workspace={} (snapshot_changed={})",
+            self._container_tag(),
+            memory_update != current_memory,
+        )
         return True
 
     async def raw_archive(self, entry: str) -> None:

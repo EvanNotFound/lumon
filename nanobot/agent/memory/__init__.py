@@ -81,12 +81,21 @@ Persist exchanges that contain durable information such as:
 - lasting communication or behavior rules
 - recurring mappings or personalized instructions
 - long-lived project context or relationships likely to matter later
+- durable workflow facts that change how the assistant should operate in future runs
+- corrections to stale assumptions that would otherwise cause repeated mistakes
+- instruction or procedure updates that should influence future behavior
 
 Do not persist exchanges that are mainly:
 - one-off chatter or acknowledgements
 - transient task details or temporary troubleshooting
 - routine back-and-forth with no durable takeaway
-- low-value wording noise that does not affect future behavior"""
+- low-value wording noise that does not affect future behavior
+
+Examples:
+- Persist: "The old missing EMAIL_HEARTBEAT.md note is fixed; treat it as resolved."
+- Persist: "Use this repo naming rule for future PR titles."
+- Skip: "I reran the command and got a timeout once."
+- Skip: "Thanks"""
 
 
 def _ensure_text(value: Any) -> str:
@@ -368,9 +377,21 @@ class MemoryConsolidator:
         """Remember messages with guaranteed persistence (retries until raw-dump fallback)."""
         if not messages:
             return True
-        for _ in range(self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE):
+        max_attempts = self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE
+        for attempt in range(max_attempts):
             if await self.consolidate_messages(messages):
+                logger.info(
+                    "Memory persistence: success on attempt {}/{} for {} messages",
+                    attempt + 1,
+                    max_attempts,
+                    len(messages),
+                )
                 return True
+        logger.warning(
+            "Memory persistence: consolidated via fallback after {} attempts for {} messages",
+            max_attempts,
+            len(messages),
+        )
         return True
 
     async def should_remember_turn(self, messages: list[dict[str, object]]) -> bool:
@@ -445,8 +466,15 @@ class MemoryConsolidator:
         """Remember a completed turn and then consolidate the session under one lock."""
         lock = self.get_lock(session_key)
         async with lock:
-            if messages and await self.should_remember_turn(messages):
-                await self.remember_messages(messages)
+            if messages:
+                should_persist = await self.should_remember_turn(messages)
+                if should_persist:
+                    await self.remember_messages(messages)
+                else:
+                    logger.debug(
+                        "Memory post-turn: skipped immediate persistence for session {}",
+                        session_key,
+                    )
             session = self.sessions.get_or_create(session_key)
             await self._consolidate_session_if_needed_locked(session)
 
