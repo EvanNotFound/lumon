@@ -39,8 +39,8 @@ async def test_supermemory_backend_persists_snapshot_and_history(tmp_path: Path)
     )
     store = MemoryStore(tmp_path, memory_config=config)
 
-    store._supermemory_list_memories = AsyncMock(return_value=[])
-    store._supermemory_add_memory = AsyncMock(
+    store._backend._supermemory_list_memories = AsyncMock(return_value=[])  # type: ignore[attr-defined]
+    store._backend._supermemory_add_memory = AsyncMock(  # type: ignore[attr-defined]
         side_effect=[
             {"id": "snapshot_1", "status": "queued"},
             {"id": "history_1", "status": "queued"},
