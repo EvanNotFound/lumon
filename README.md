@@ -48,6 +48,7 @@ For compatibility, the operational names below still use the existing `nanobot` 
   - [Docker Compose](#docker-compose)
   - [Docker](#docker)
 - [🐧 Linux Service](#-linux-service)
+  - [GitHub Actions Auto-Deploy (VPS)](#github-actions-auto-deploy-vps)
 - [📁 Project Structure](#-project-structure)
 - [🤝 Contribute \& Roadmap](#-contribute--roadmap)
 
@@ -1658,6 +1659,42 @@ If you edit the `.service` file itself, run `systemctl --user daemon-reload` bef
 > ```bash
 > loginctl enable-linger $USER
 > ```
+
+### GitHub Actions Auto-Deploy (VPS)
+
+Use `.github/workflows/deploy.yml` to redeploy automatically when the `Test Suite` workflow passes on `main`.
+
+**Required repository secrets:**
+
+- `VPS_HOST` (for example `203.0.113.10`)
+- `VPS_SSH_KEY` (private key for SSH auth)
+- `VPS_KNOWN_HOSTS` (host key line from `ssh-keyscan`)
+- `VPS_USER` (optional, defaults to `ubuntu`)
+- `VPS_SSH_PORT` (optional, defaults to `22`)
+
+Example to generate `VPS_KNOWN_HOSTS` locally:
+
+```bash
+ssh-keyscan -p 22 your-vps-hostname
+```
+
+The deploy job SSHes into the VPS and runs:
+
+```bash
+cd /home/ubuntu/nanobot
+git fetch origin main
+git checkout main
+git pull --ff-only origin main
+uv tool install --reinstall --from /home/ubuntu/nanobot nanobot-ai
+systemctl --user restart nanobot-gateway.service
+```
+
+Prerequisites on the VPS:
+
+- Repo is cloned at `/home/ubuntu/nanobot`
+- `uv` is installed for the `ubuntu` user
+- `nanobot-gateway.service` is already set up as a user service
+- User lingering is enabled if the user session is not always logged in
 
 ## 📁 Project Structure
 

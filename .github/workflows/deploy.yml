@@ -1,0 +1,78 @@
+name: Deploy to VPS
+
+on:
+  workflow_run:
+    workflows: ["Test Suite"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_SSH_PORT }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          printf "%s\n" "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          printf "%s\n" "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Pull, reinstall, and restart gateway
+        run: |
+          set -euo pipefail
+          target_user="${VPS_USER:-ubuntu}"
+          target_port="${VPS_PORT:-22}"
+
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$target_port" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$target_user@$VPS_HOST" \
+            'bash -s' <<'EOF'
+          set -euo pipefail
+
+          cd /home/ubuntu/nanobot
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          if command -v uv >/dev/null 2>&1; then
+            uv_bin="uv"
+          elif [ -x "$HOME/.local/bin/uv" ]; then
+            uv_bin="$HOME/.local/bin/uv"
+          else
+            echo "uv is not available on PATH or at ~/.local/bin/uv"
+            exit 1
+          fi
+
+          "$uv_bin" tool install --reinstall --from /home/ubuntu/nanobot nanobot-ai
+
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl --user restart nanobot-gateway.service
+          systemctl --user is-active --quiet nanobot-gateway.service
+          systemctl --user --no-pager status nanobot-gateway.service
+          EOF
