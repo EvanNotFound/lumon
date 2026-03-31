@@ -1,10 +1,11 @@
 """Test session management with cache-friendly message handling."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pathlib import Path
+
 from nanobot.session.manager import Session, SessionManager
 
 # Test constants
@@ -500,13 +501,17 @@ class TestNewCommandArchival:
             model="test-model",
             context_window_tokens=1,
         )
-        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.provider.chat_with_retry = AsyncMock(
+            return_value=LLMResponse(content="ok", tool_calls=[])
+        )
         loop.tools.get_definitions = MagicMock(return_value=[])
         return loop
 
     @pytest.mark.asyncio
-    async def test_new_clears_session_immediately_even_if_archive_fails(self, tmp_path: Path) -> None:
-        """/new clears session immediately; archive_messages retries until raw dump."""
+    async def test_new_clears_session_immediately_even_if_archive_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """/new clears session immediately; remember_messages retries until raw dump."""
         from nanobot.bus.events import InboundMessage
 
         loop = self._make_loop(tmp_path)

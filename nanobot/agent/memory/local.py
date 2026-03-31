@@ -36,10 +36,10 @@ class LocalMemoryBackend:
         long_term = self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
 
-    async def prepare_prompt_memory(self, query: str | None = None) -> None:
+    async def load_prompt_memory(self, query: str | None = None) -> None:
         del query
 
-    async def persist_consolidation(self, history_entry: str, memory_update: str) -> bool:
+    async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
         current_memory = self.read_long_term()
         self.append_history(history_entry)
         if memory_update != current_memory:

@@ -46,7 +46,7 @@ class SupermemoryMemoryBackend:
             parts.append(f"## Retrieved Memory\n{self._retrieved_context}")
         return "\n\n".join(parts)
 
-    async def prepare_prompt_memory(self, query: str | None = None) -> None:
+    async def load_prompt_memory(self, query: str | None = None) -> None:
         self._retrieved_context = ""
         await self._hydrate_snapshot_from_supermemory()
         if query:
@@ -399,7 +399,7 @@ class SupermemoryMemoryBackend:
             self._snapshot_id = doc_id
         return True
 
-    async def persist_consolidation(self, history_entry: str, memory_update: str) -> bool:
+    async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
         current_memory = self.read_long_term()
         if memory_update != current_memory:
             if not await self._supermemory_upsert_snapshot(memory_update):

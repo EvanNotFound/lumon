@@ -701,11 +701,31 @@ class AgentLoop:
             status.available_tools = []
             status.registered_tools = []
 
-    def _schedule_background(self, coro) -> None:
+    def _schedule_background(
+        self,
+        coro: Awaitable[Any],
+        *,
+        label: str = "background task",
+    ) -> None:
         """Schedule a coroutine as a tracked background task (drained on shutdown)."""
         task = asyncio.create_task(coro)
         self._background_tasks.append(task)
-        task.add_done_callback(self._background_tasks.remove)
+
+        def _done(done: asyncio.Task) -> None:
+            try:
+                self._background_tasks.remove(done)
+            except ValueError:
+                pass
+
+            try:
+                exc = done.exception()
+            except asyncio.CancelledError:
+                return
+
+            if exc is not None:
+                logger.opt(exception=exc).error("{} failed", label)
+
+        task.add_done_callback(_done)
 
     def stop(self) -> None:
         """Stop the agent loop."""
@@ -730,10 +750,10 @@ class AgentLoop:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
-            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+            await self.memory_consolidator.consolidate_session_if_needed(session)
             history = session.get_history(max_messages=0)
             retrieval_query = self._build_memory_retrieval_query(history, msg.content)
-            await self.context.memory.prepare_prompt_memory(retrieval_query)
+            await self.context.memory.load_prompt_memory(retrieval_query)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
@@ -752,7 +772,10 @@ class AgentLoop:
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
-            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+            self._schedule_background(
+                self.memory_consolidator.consolidate_session_if_needed(session),
+                label="system post-turn consolidation",
+            )
             return OutboundMessage(
                 channel=channel,
                 chat_id=chat_id,
@@ -771,10 +794,10 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
-        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        await self.memory_consolidator.consolidate_session_if_needed(session)
         history = session.get_history(max_messages=0)
         retrieval_query = self._build_memory_retrieval_query(history, msg.content)
-        await self.context.memory.prepare_prompt_memory(retrieval_query)
+        await self.context.memory.load_prompt_memory(retrieval_query)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
@@ -820,15 +843,17 @@ class AgentLoop:
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
 
+        post_turn_messages: list[dict[str, object]] = []
         if final_content:
-            eager_chunk: list[dict[str, object]] = [
+            post_turn_messages = [
                 {"role": "user", "content": msg.content},
                 {"role": "assistant", "content": final_content},
             ]
-            if await self.memory_consolidator.should_eager_persist_turn(eager_chunk):
-                await self.memory_consolidator.archive_messages(eager_chunk)
 
-        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._schedule_background(
+            self.memory_consolidator.process_post_turn_memory(key, post_turn_messages),
+            label="post-turn memory",
+        )
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None

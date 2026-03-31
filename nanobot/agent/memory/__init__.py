@@ -158,12 +158,12 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         return self._backend.get_memory_context()
 
-    async def prepare_prompt_memory(self, query: str | None = None) -> None:
+    async def load_prompt_memory(self, query: str | None = None) -> None:
         """Best-effort preload for prompt-time memory context."""
-        await self._backend.prepare_prompt_memory(query)
+        await self._backend.load_prompt_memory(query)
 
-    async def persist_consolidation(self, history_entry: str, memory_update: str) -> bool:
-        return await self._backend.persist_consolidation(history_entry, memory_update)
+    async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
+        return await self._backend.save_consolidation(history_entry, memory_update)
 
     @staticmethod
     def _format_messages(messages: list[dict]) -> str:
@@ -189,7 +189,7 @@ class MemoryStore:
         if not messages:
             return True
 
-        await self.prepare_prompt_memory()
+        await self.load_prompt_memory()
         current_memory = self.read_long_term()
         prompt = f"""Process this conversation and call the save_memory tool with your consolidation.
 
@@ -259,7 +259,7 @@ class MemoryStore:
                 return await self._fail_or_raw_archive(messages)
 
             update = _ensure_text(update)
-            if not await self.persist_consolidation(entry, update):
+            if not await self.save_consolidation(entry, update):
                 logger.warning(
                     "Memory consolidation: persistence failed for backend={}", self.backend
                 )
@@ -364,8 +364,8 @@ class MemoryConsolidator:
             self._get_tool_definitions(),
         )
 
-    async def archive_messages(self, messages: list[dict[str, object]]) -> bool:
-        """Archive messages with guaranteed persistence (retries until raw-dump fallback)."""
+    async def remember_messages(self, messages: list[dict[str, object]]) -> bool:
+        """Remember messages with guaranteed persistence (retries until raw-dump fallback)."""
         if not messages:
             return True
         for _ in range(self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE):
@@ -373,7 +373,7 @@ class MemoryConsolidator:
                 return True
         return True
 
-    async def should_eager_persist_turn(self, messages: list[dict[str, object]]) -> bool:
+    async def should_remember_turn(self, messages: list[dict[str, object]]) -> bool:
         """Use the model to judge whether a completed exchange deserves immediate persistence."""
         if not messages:
             return False
@@ -437,7 +437,20 @@ class MemoryConsolidator:
             logger.exception("Memory decision failed")
             return False
 
-    async def maybe_consolidate_by_tokens(self, session: Session) -> None:
+    async def process_post_turn_memory(
+        self,
+        session_key: str,
+        messages: list[dict[str, object]],
+    ) -> None:
+        """Remember a completed turn and then consolidate the session under one lock."""
+        lock = self.get_lock(session_key)
+        async with lock:
+            if messages and await self.should_remember_turn(messages):
+                await self.remember_messages(messages)
+            session = self.sessions.get_or_create(session_key)
+            await self._consolidate_session_if_needed_locked(session)
+
+    async def consolidate_session_if_needed(self, session: Session) -> None:
         """Loop: archive old messages until prompt fits within safe budget.
 
         The budget reserves space for completion tokens and a safety buffer
@@ -448,56 +461,60 @@ class MemoryConsolidator:
 
         lock = self.get_lock(session.key)
         async with lock:
-            budget = self.context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
-            target = budget // 2
+            await self._consolidate_session_if_needed_locked(session)
+
+    async def _consolidate_session_if_needed_locked(self, session: Session) -> None:
+        """Run token-based session consolidation while assuming the session lock is held."""
+        budget = self.context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
+        target = budget // 2
+        estimated, source = self.estimate_session_prompt_tokens(session)
+        if estimated <= 0:
+            return
+        if estimated < budget:
+            logger.debug(
+                "Token consolidation idle {}: {}/{} via {}",
+                session.key,
+                estimated,
+                self.context_window_tokens,
+                source,
+            )
+            return
+
+        for round_num in range(self._MAX_CONSOLIDATION_ROUNDS):
+            if estimated <= target:
+                return
+
+            boundary = self.pick_consolidation_boundary(session, max(1, estimated - target))
+            if boundary is None:
+                logger.debug(
+                    "Token consolidation: no safe boundary for {} (round {})",
+                    session.key,
+                    round_num,
+                )
+                return
+
+            end_idx = boundary[0]
+            chunk = session.messages[session.last_consolidated : end_idx]
+            if not chunk:
+                return
+
+            logger.info(
+                "Token consolidation round {} for {}: {}/{} via {}, chunk={} msgs",
+                round_num,
+                session.key,
+                estimated,
+                self.context_window_tokens,
+                source,
+                len(chunk),
+            )
+            if not await self.consolidate_messages(chunk):
+                return
+            session.last_consolidated = end_idx
+            self.sessions.save(session)
+
             estimated, source = self.estimate_session_prompt_tokens(session)
             if estimated <= 0:
                 return
-            if estimated < budget:
-                logger.debug(
-                    "Token consolidation idle {}: {}/{} via {}",
-                    session.key,
-                    estimated,
-                    self.context_window_tokens,
-                    source,
-                )
-                return
-
-            for round_num in range(self._MAX_CONSOLIDATION_ROUNDS):
-                if estimated <= target:
-                    return
-
-                boundary = self.pick_consolidation_boundary(session, max(1, estimated - target))
-                if boundary is None:
-                    logger.debug(
-                        "Token consolidation: no safe boundary for {} (round {})",
-                        session.key,
-                        round_num,
-                    )
-                    return
-
-                end_idx = boundary[0]
-                chunk = session.messages[session.last_consolidated : end_idx]
-                if not chunk:
-                    return
-
-                logger.info(
-                    "Token consolidation round {} for {}: {}/{} via {}, chunk={} msgs",
-                    round_num,
-                    session.key,
-                    estimated,
-                    self.context_window_tokens,
-                    source,
-                    len(chunk),
-                )
-                if not await self.consolidate_messages(chunk):
-                    return
-                session.last_consolidated = end_idx
-                self.sessions.save(session)
-
-                estimated, source = self.estimate_session_prompt_tokens(session)
-                if estimated <= 0:
-                    return
 
 
 __all__ = [

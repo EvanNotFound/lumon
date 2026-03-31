@@ -81,7 +81,7 @@ async def test_prompt_above_threshold_archives_until_next_user_boundary(
         memory_module, "estimate_message_tokens", lambda message: token_map[message["content"]]
     )
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.consolidate_session_if_needed(session)
 
     archived_chunk = loop.memory_consolidator.consolidate_messages.await_args.args[0]
     assert [message["content"] for message in archived_chunk] == ["u1", "a1", "u2", "a2"]
@@ -90,7 +90,7 @@ async def test_prompt_above_threshold_archives_until_next_user_boundary(
 
 @pytest.mark.asyncio
 async def test_consolidation_loops_until_target_met(tmp_path, monkeypatch) -> None:
-    """Verify maybe_consolidate_by_tokens keeps looping until under threshold."""
+    """Verify consolidate_session_if_needed keeps looping until under threshold."""
     loop = _make_loop(tmp_path, estimated_tokens=0, context_window_tokens=200)
     loop.memory_consolidator.consolidate_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
@@ -119,7 +119,7 @@ async def test_consolidation_loops_until_target_met(tmp_path, monkeypatch) -> No
     loop.memory_consolidator.estimate_session_prompt_tokens = mock_estimate  # type: ignore[method-assign]
     monkeypatch.setattr(memory_module, "estimate_message_tokens", lambda _m: 100)
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.consolidate_session_if_needed(session)
 
     assert loop.memory_consolidator.consolidate_messages.await_count == 2
     assert session.last_consolidated == 6
@@ -158,7 +158,7 @@ async def test_consolidation_continues_below_trigger_until_half_target(
     loop.memory_consolidator.estimate_session_prompt_tokens = mock_estimate  # type: ignore[method-assign]
     monkeypatch.setattr(memory_module, "estimate_message_tokens", lambda _m: 100)
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.consolidate_session_if_needed(session)
 
     assert loop.memory_consolidator.consolidate_messages.await_count == 2
     assert session.last_consolidated == 6
@@ -209,10 +209,16 @@ async def test_preflight_consolidation_before_llm_call(tmp_path, monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_prepare_prompt_memory_uses_current_message(tmp_path) -> None:
+async def test_load_prompt_memory_uses_current_message(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
-    loop.context.memory.prepare_prompt_memory = AsyncMock()  # type: ignore[method-assign]
-    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop.context.memory.load_prompt_memory = AsyncMock()  # type: ignore[method-assign]
+
+    scheduled: list[tuple[object, str]] = []
+
+    def capture_background(coro, *, label: str = "background task") -> None:
+        scheduled.append((coro, label))
+
+    loop._schedule_background = capture_background  # type: ignore[method-assign]
 
     session = loop.sessions.get_or_create("cli:test")
     session.messages = [
@@ -228,39 +234,88 @@ async def test_prepare_prompt_memory_uses_current_message(tmp_path) -> None:
 
     await loop.process_direct("current message", session_key="cli:test")
 
-    loop.context.memory.prepare_prompt_memory.assert_awaited_once()
-    retrieval_query = loop.context.memory.prepare_prompt_memory.await_args.args[0]
+    loop.context.memory.load_prompt_memory.assert_awaited_once()
+    retrieval_query = loop.context.memory.load_prompt_memory.await_args.args[0]
     assert "oldest" not in retrieval_query
     for value in ("keep1", "keep2", "keep3", "keep4", "keep5", "keep6", "current message"):
         assert value in retrieval_query
 
-
-@pytest.mark.asyncio
-async def test_model_memory_decision_triggers_immediate_archive(tmp_path) -> None:
-    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
-    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    loop.memory_consolidator.archive_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
-
-    await loop.process_direct("my online handle is evannotfound", session_key="cli:test")
-
-    loop.memory_consolidator.archive_messages.assert_awaited_once()
-    await_args = loop.memory_consolidator.archive_messages.await_args
-    assert await_args is not None
-    archived_chunk = await_args.args[0]
-    assert archived_chunk[0]["role"] == "user"
-    assert "evannotfound" in archived_chunk[0]["content"]
-    assert archived_chunk[1]["role"] == "assistant"
+    for coro, _label in scheduled:
+        coro.close()
 
 
 @pytest.mark.asyncio
-async def test_model_memory_decision_false_skips_immediate_archive(tmp_path) -> None:
+async def test_process_direct_schedules_post_turn_memory_in_background(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
-    loop.memory_consolidator.should_eager_persist_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    loop.memory_consolidator.archive_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
 
-    await loop.process_direct("hello", session_key="cli:test")
+    scheduled: list[tuple[object, str]] = []
 
-    loop.memory_consolidator.archive_messages.assert_not_awaited()
+    def capture_background(coro, *, label: str = "background task") -> None:
+        scheduled.append((coro, label))
+
+    loop._schedule_background = capture_background  # type: ignore[method-assign]
+    loop.memory_consolidator.should_remember_turn = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    response = await loop.process_direct("my online handle is evannotfound", session_key="cli:test")
+
+    assert response is not None
+    loop.memory_consolidator.should_remember_turn.assert_not_awaited()
+    assert len(scheduled) == 1
+    coro, label = scheduled[0]
+    assert label == "post-turn memory"
+    coro.close()
+
+
+@pytest.mark.asyncio
+async def test_process_post_turn_memory_orders_judge_remember_then_consolidate(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.sessions.save(loop.sessions.get_or_create("cli:test"))
+    order: list[str] = []
+
+    async def track_should(_messages) -> bool:
+        order.append("judge")
+        return True
+
+    async def track_remember(_messages) -> bool:
+        order.append("remember")
+        return True
+
+    async def track_consolidate(_session) -> None:
+        order.append("consolidate")
+
+    loop.memory_consolidator.should_remember_turn = track_should  # type: ignore[method-assign]
+    loop.memory_consolidator.remember_messages = track_remember  # type: ignore[method-assign]
+    loop.memory_consolidator._consolidate_session_if_needed_locked = track_consolidate  # type: ignore[method-assign]
+
+    await loop.memory_consolidator.process_post_turn_memory(
+        "cli:test",
+        [
+            {"role": "user", "content": "my online handle is evannotfound"},
+            {"role": "assistant", "content": "I'll remember that."},
+        ],
+    )
+
+    assert order == ["judge", "remember", "consolidate"]
+
+
+@pytest.mark.asyncio
+async def test_process_post_turn_memory_false_skips_remember(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.sessions.save(loop.sessions.get_or_create("cli:test"))
+    loop.memory_consolidator.should_remember_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop.memory_consolidator.remember_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    loop.memory_consolidator._consolidate_session_if_needed_locked = AsyncMock()  # type: ignore[method-assign]
+
+    await loop.memory_consolidator.process_post_turn_memory(
+        "cli:test",
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ],
+    )
+
+    loop.memory_consolidator.remember_messages.assert_not_awaited()
+    loop.memory_consolidator._consolidate_session_if_needed_locked.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -279,7 +334,7 @@ async def test_model_memory_decision_returns_true_from_tool_call(tmp_path) -> No
         )
     )
 
-    result = await loop.memory_consolidator.should_eager_persist_turn(
+    result = await loop.memory_consolidator.should_remember_turn(
         [
             {"role": "user", "content": "my handle is evannotfound"},
             {"role": "assistant", "content": "I'll remember that."},
@@ -294,7 +349,7 @@ async def test_model_memory_decision_without_tool_call_defaults_false(tmp_path) 
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="no", tool_calls=[]))
 
-    result = await loop.memory_consolidator.should_eager_persist_turn(
+    result = await loop.memory_consolidator.should_remember_turn(
         [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},

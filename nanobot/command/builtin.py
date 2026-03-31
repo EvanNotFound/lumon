@@ -126,7 +126,10 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
     if snapshot:
-        loop._schedule_background(loop.memory_consolidator.archive_messages(snapshot))
+        loop._schedule_background(
+            loop.memory_consolidator.remember_messages(snapshot),
+            label="session snapshot memory",
+        )
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
