@@ -105,6 +105,22 @@ class ProvidersConfig(Base):
     )  # Github Copilot (OAuth)
 
 
+class SupermemoryConfig(Base):
+    """Supermemory backend configuration."""
+
+    api_key: str = ""
+    base_url: str = "https://api.supermemory.ai"
+    container_tag: str = ""
+    timeout_s: int = 10
+
+
+class MemoryConfig(Base):
+    """Long-term memory backend configuration."""
+
+    backend: Literal["local", "supermemory"] = "local"
+    supermemory: SupermemoryConfig = Field(default_factory=SupermemoryConfig)
+
+
 class HeartbeatConfig(Base):
     """Heartbeat service configuration."""
 
@@ -185,6 +201,7 @@ class Config(BaseSettings):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 

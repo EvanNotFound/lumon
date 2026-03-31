@@ -340,7 +340,10 @@ def onboard(
         workspace_path.mkdir(parents=True, exist_ok=True)
         console.print(f"[green]✓[/green] Created workspace at {workspace_path}")
 
-    sync_workspace_templates(workspace_path)
+    if config.memory.backend == "local":
+        sync_workspace_templates(workspace_path)
+    else:
+        sync_workspace_templates(workspace_path, memory_backend=config.memory.backend)
 
     agent_cmd = 'nanobot agent -m "Hello!"'
     gateway_cmd = "nanobot gateway"
@@ -548,7 +551,10 @@ def gateway(
     port = port if port is not None else config.gateway.port
 
     console.print(f"{__logo__} Starting nanobot gateway version {__version__} on port {port}...")
-    sync_workspace_templates(config.workspace_path)
+    if config.memory.backend == "local":
+        sync_workspace_templates(config.workspace_path)
+    else:
+        sync_workspace_templates(config.workspace_path, memory_backend=config.memory.backend)
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
@@ -580,6 +586,7 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         runtime_timezone=config.agents.defaults.timezone,
+        memory_config=config.memory,
     )
 
     # Set cron callback (needs agent)
@@ -766,7 +773,10 @@ def agent(
     from nanobot.cron.service import CronService
 
     config = _load_runtime_config(config, workspace)
-    sync_workspace_templates(config.workspace_path)
+    if config.memory.backend == "local":
+        sync_workspace_templates(config.workspace_path)
+    else:
+        sync_workspace_templates(config.workspace_path, memory_backend=config.memory.backend)
 
     bus = MessageBus()
     provider = _make_provider(config)
@@ -801,6 +811,7 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         runtime_timezone=config.agents.defaults.timezone,
+        memory_config=config.memory,
     )
 
     # Shared reference for progress callbacks

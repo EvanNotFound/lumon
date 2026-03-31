@@ -1,15 +1,23 @@
 ---
 name: memory
-description: Two-layer memory system with grep-based recall.
+description: Local markdown memory workflow.
 always: true
 ---
 
 # Memory
 
+This skill applies to the `local` memory backend.
+
+If `memory.backend` is `supermemory`, do not use this workflow:
+
+- Do not create or edit `memory/MEMORY.md`
+- Do not create or search `memory/HISTORY.md`
+- Let nanobot persist memory automatically to Supermemory
+
 ## Structure
 
-- `memory/MEMORY.md` — Long-term facts (preferences, project context, relationships). Always loaded into your context.
-- `memory/HISTORY.md` — Append-only event log. NOT loaded into context. Search it with grep-style tools or in-memory filters. Each entry starts with [YYYY-MM-DD HH:MM].
+- `memory/MEMORY.md` — Long-term facts (preferences, project context, relationships). Always loaded into your context in `local` mode.
+- `memory/HISTORY.md` — Append-only event log. NOT loaded into context. Search it with grep-style tools or in-memory filters. Each entry starts with `[YYYY-MM-DD HH:MM]`.
 
 ## Search Past Events
 

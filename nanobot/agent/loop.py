@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         ChannelsConfig,
         ExecToolConfig,
         InputLimitsConfig,
+        MemoryConfig,
         WebSearchConfig,
     )
     from nanobot.cron.service import CronService
@@ -70,6 +72,17 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
+    _EXPLICIT_MEMORY_PATTERNS = (
+        re.compile(r"\bremember (?:this|that|it)\b", re.IGNORECASE),
+        re.compile(r"\bplease remember\b", re.IGNORECASE),
+        re.compile(r"\bdon't forget\b", re.IGNORECASE),
+        re.compile(r"\bdo not forget\b", re.IGNORECASE),
+        re.compile(r"\bfrom now on\b", re.IGNORECASE),
+        re.compile(r"\bwhen i say\b", re.IGNORECASE),
+        re.compile(r"\bif i say\b", re.IGNORECASE),
+        re.compile(r"\bstore this\b", re.IGNORECASE),
+        re.compile(r"\bsave this\b", re.IGNORECASE),
+    )
 
     def __init__(
         self,
@@ -90,6 +103,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         runtime_timezone: str | None = None,
+        memory_config: MemoryConfig | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, InputLimitsConfig, WebSearchConfig
 
@@ -117,6 +131,7 @@ class AgentLoop:
             workspace,
             input_limits=self.input_limits,
             runtime_timezone=self.runtime_timezone,
+            memory_config=memory_config,
         )
         self.runner = AgentRunner(provider)
         self.sessions = session_manager or SessionManager(workspace)
@@ -157,6 +172,7 @@ class AgentLoop:
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=provider.generation.max_tokens,
+            memory_config=memory_config,
         )
         self._register_default_tools()
         self.commands = CommandRouter()
@@ -396,6 +412,14 @@ class AgentLoop:
             self.context_budget_tokens,
             Session._find_legal_start,
         )
+
+    @classmethod
+    def _should_eager_persist_memory(cls, message: str) -> bool:
+        """Detect explicit memory directives that should persist immediately."""
+        text = (message or "").strip()
+        if not text:
+            return False
+        return any(pattern.search(text) for pattern in cls._EXPLICIT_MEMORY_PATTERNS)
 
     async def _run_agent_loop(
         self,
@@ -681,6 +705,7 @@ class AgentLoop:
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+            await self.context.memory.prepare_prompt_memory(msg.content)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=0)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
@@ -719,7 +744,9 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
+        eager_memory = self._should_eager_persist_memory(msg.content)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        await self.context.memory.prepare_prompt_memory(msg.content)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
@@ -765,6 +792,14 @@ class AgentLoop:
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
+
+        if eager_memory and final_content:
+            eager_chunk: list[dict[str, object]] = [
+                {"role": "user", "content": msg.content},
+                {"role": "assistant", "content": final_content},
+            ]
+            await self.memory_consolidator.archive_messages(eager_chunk)
+
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:

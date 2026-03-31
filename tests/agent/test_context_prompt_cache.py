@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as datetime_module
 from datetime import datetime as real_datetime
 from importlib.resources import files as pkg_files
 from pathlib import Path
-import datetime as datetime_module
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.config.schema import MemoryConfig
 
 
 class _FakeDatetime(real_datetime):
@@ -71,3 +72,17 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     assert "Channel: cli" in user_content
     assert "Chat ID: direct" in user_content
     assert "Return exactly: OK" in user_content
+
+
+def test_supermemory_prompt_omits_local_memory_write_guidance(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(
+        workspace,
+        memory_config=MemoryConfig.model_validate({"backend": "supermemory"}),
+    )
+
+    prompt = builder.build_system_prompt()
+
+    assert "Long-term memory backend: Supermemory (remote)" in prompt
+    assert "write important facts here" not in prompt
+    assert "When to Update MEMORY.md" not in prompt

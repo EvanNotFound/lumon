@@ -8,7 +8,7 @@ from typing import Any
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
-from nanobot.config.schema import InputLimitsConfig
+from nanobot.config.schema import InputLimitsConfig, MemoryConfig
 from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
 
 
@@ -23,9 +23,10 @@ class ContextBuilder:
         workspace: Path,
         input_limits: InputLimitsConfig | None = None,
         runtime_timezone: str | None = None,
+        memory_config: MemoryConfig | None = None,
     ):
         self.workspace = workspace
-        self.memory = MemoryStore(workspace)
+        self.memory = MemoryStore(workspace, memory_config=memory_config)
         self.skills = SkillsLoader(workspace)
         self.input_limits = input_limits or InputLimitsConfig()
         self.runtime_timezone = runtime_timezone
@@ -43,6 +44,8 @@ class ContextBuilder:
             parts.append(f"# Memory\n\n{memory}")
 
         always_skills = self.skills.get_always_skills()
+        if self.memory.is_supermemory():
+            always_skills = [name for name in always_skills if name != "memory"]
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
@@ -64,6 +67,21 @@ Skills with available="false" need dependencies installed first - you can try in
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+        if self.memory.is_supermemory():
+            memory_lines = (
+                "- Long-term memory backend: Supermemory (remote)\n"
+                "- Local memory files are not the active backend in this mode.\n"
+                "- Custom skills: "
+                f"{workspace_path}/skills/{{skill-name}}/SKILL.md"
+            )
+        else:
+            memory_lines = (
+                f"- Long-term memory: {workspace_path}/memory/MEMORY.md (write important facts here)\n"
+                "- History log: "
+                f"{workspace_path}/memory/HISTORY.md (grep-searchable). "
+                "Each entry starts with [YYYY-MM-DD HH:MM].\n"
+                f"- Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md"
+            )
 
         platform_policy = ""
         if system == "Windows":
@@ -87,9 +105,7 @@ You are nanobot, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: {workspace_path}
-- Long-term memory: {workspace_path}/memory/MEMORY.md (write important facts here)
-- History log: {workspace_path}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
-- Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
+{memory_lines}
 
 {platform_policy}
 
