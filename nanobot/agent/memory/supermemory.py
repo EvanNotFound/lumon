@@ -259,39 +259,6 @@ class SupermemoryMemoryBackend:
             return None
         return self._object_to_dict(result)
 
-    async def _supermemory_update_memory(
-        self,
-        memory_id: str,
-        *,
-        content: str,
-        metadata: dict[str, Any],
-    ) -> bool:
-        tag = self._container_tag()
-
-        async def _run(client: Any) -> Any:
-            documents = getattr(client, "documents", None)
-            update_fn = getattr(documents, "update", None)
-            if not callable(update_fn):
-                logger.warning("Supermemory SDK does not expose documents.update")
-                return None
-
-            try:
-                return await self._await_if_needed(
-                    update_fn(memory_id, content=content, container_tag=tag, metadata=metadata)
-                )
-            except TypeError:
-                try:
-                    return await self._await_if_needed(
-                        update_fn(
-                            memory_id, content=content, container_tags=[tag], metadata=metadata
-                        )
-                    )
-                except TypeError:
-                    return await self._await_if_needed(update_fn(memory_id, content=content))
-
-        result = await self._with_supermemory_client("documents.update", _run)
-        return result is not None
-
     async def _supermemory_search_memories(
         self, query: str, *, limit: int = 5
     ) -> list[dict[str, Any]]:
@@ -340,6 +307,9 @@ class SupermemoryMemoryBackend:
         matches = await self._supermemory_search_memories(query, limit=5)
         lines: list[str] = []
         for idx, item in enumerate(matches, start=1):
+            metadata = item.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("kind") == "snapshot":
+                continue
             text = self._extract_item_text(item)
             if not text:
                 continue
@@ -416,20 +386,9 @@ class SupermemoryMemoryBackend:
             "workspace": self._container_tag(),
             "snapshot_key": snapshot_custom_id,
         }
-        if self._snapshot_id:
-            if await self._supermemory_update_memory(
-                self._snapshot_id,
-                content=content,
-                metadata=metadata,
-            ):
-                logger.debug("Supermemory snapshot updated: id={}", self._snapshot_id)
-                return True
-            logger.warning("Supermemory snapshot update failed; retrying as create")
-
         created = await self._supermemory_add_memory(
             content=content,
             metadata=metadata,
-            custom_id=snapshot_custom_id,
         )
         if created is None:
             return False
@@ -438,9 +397,9 @@ class SupermemoryMemoryBackend:
         if isinstance(doc_id, str) and doc_id:
             self._snapshot_id = doc_id
         logger.debug(
-            "Supermemory snapshot created: id={}, custom_id={}",
+            "Supermemory snapshot appended: id={}, workspace={}",
             self._snapshot_id or "?",
-            snapshot_custom_id,
+            self._container_tag(),
         )
         return True
 
