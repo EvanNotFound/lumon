@@ -48,6 +48,27 @@ _SAVE_MEMORY_TOOL = [
     }
 ]
 
+_SAVE_SUPERMEMORY_SUMMARY_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "save_supermemory_summary",
+            "description": "Save one durable summary record for Supermemory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary_entry": {
+                        "type": "string",
+                        "description": "One concise durable memory record for this exchange."
+                        " Do not return a full rewritten memory document.",
+                    }
+                },
+                "required": ["summary_entry"],
+            },
+        },
+    }
+]
+
 _MEMORY_DECISION_TOOL = [
     {
         "type": "function",
@@ -155,25 +176,26 @@ class MemoryStore:
     def backend(self) -> str:
         return self.config.backend
 
+    def _local_backend(self) -> LocalMemoryBackend:
+        if not isinstance(self._backend, LocalMemoryBackend):
+            raise RuntimeError("Local memory files are unavailable with Supermemory backend")
+        return self._backend
+
+    def _supermemory_backend(self) -> SupermemoryMemoryBackend:
+        if not isinstance(self._backend, SupermemoryMemoryBackend):
+            raise RuntimeError("Supermemory operations require supermemory backend")
+        return self._backend
+
     @property
     def memory_file(self) -> Path:
-        return self._backend.memory_file
+        return self._local_backend().memory_file
 
     @property
     def history_file(self) -> Path:
-        return self._backend.history_file
+        return self._local_backend().history_file
 
     def is_supermemory(self) -> bool:
         return self._backend.is_supermemory()
-
-    def read_long_term(self) -> str:
-        return self._backend.read_long_term()
-
-    def write_long_term(self, content: str) -> None:
-        self._backend.write_long_term(content)
-
-    def append_history(self, entry: str) -> None:
-        self._backend.append_history(entry)
 
     def get_memory_context(self) -> str:
         return self._backend.get_memory_context()
@@ -182,8 +204,8 @@ class MemoryStore:
         """Best-effort preload for prompt-time memory context."""
         await self._backend.load_prompt_memory(query)
 
-    async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
-        return await self._backend.save_consolidation(history_entry, memory_update)
+    async def save_supermemory_summary(self, summary_entry: str) -> bool:
+        return await self._supermemory_backend().save_summary(summary_entry)
 
     async def save_raw_turn(self, messages: list[dict[str, object]]) -> bool:
         if not messages:
@@ -216,8 +238,19 @@ class MemoryStore:
         if not messages:
             return True
 
+        if self.is_supermemory():
+            return await self._consolidate_supermemory(messages, provider, model)
+        return await self._consolidate_local(messages, provider, model)
+
+    async def _consolidate_local(
+        self,
+        messages: list[dict],
+        provider: LLMProvider,
+        model: str,
+    ) -> bool:
+        local_backend = self._local_backend()
         await self.load_prompt_memory()
-        current_memory = self.read_long_term()
+        current_memory = local_backend.read_long_term()
         prompt = f"""Process this conversation and call the save_memory tool with your consolidation.
 
 ## Current Long-term Memory
@@ -286,7 +319,7 @@ class MemoryStore:
                 return await self._fail_or_raw_archive(messages)
 
             update = _ensure_text(update)
-            if not await self.save_consolidation(entry, update):
+            if not await local_backend.save_consolidation(entry, update):
                 logger.warning(
                     "Memory consolidation: persistence failed for backend={}", self.backend
                 )
@@ -297,6 +330,102 @@ class MemoryStore:
             return True
         except Exception:
             logger.exception("Memory consolidation failed")
+            return await self._fail_or_raw_archive(messages)
+
+    async def _consolidate_supermemory(
+        self,
+        messages: list[dict],
+        provider: LLMProvider,
+        model: str,
+    ) -> bool:
+        retrieval_query = self._format_messages(messages)
+        if len(retrieval_query) > 1200:
+            retrieval_query = retrieval_query[:1200]
+        await self.load_prompt_memory(retrieval_query)
+        retrieved_context = self.get_memory_context() or "(empty)"
+        prompt = f"""Process this conversation and call save_supermemory_summary.
+
+Write one concise durable memory record for future retrieval.
+Do not output a full rewritten long-term memory document.
+
+## Existing Relevant Memory
+{retrieved_context}
+
+## Conversation to Process
+{self._format_messages(messages)}"""
+
+        chat_messages = [
+            {
+                "role": "system",
+                "content": "You are a memory consolidation agent for Supermemory. "
+                "Write one durable summary record per call.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            forced = {"type": "function", "function": {"name": "save_supermemory_summary"}}
+            response = await provider.chat_with_retry(
+                messages=chat_messages,
+                tools=_SAVE_SUPERMEMORY_SUMMARY_TOOL,
+                model=model,
+                tool_choice=forced,
+            )
+
+            if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
+                logger.warning("Forced tool_choice unsupported, retrying with auto")
+                response = await provider.chat_with_retry(
+                    messages=chat_messages,
+                    tools=_SAVE_SUPERMEMORY_SUMMARY_TOOL,
+                    model=model,
+                    tool_choice="auto",
+                )
+
+            if not response.has_tool_calls:
+                logger.warning(
+                    "Memory consolidation: LLM did not call save_supermemory_summary "
+                    "(finish_reason={}, content_len={}, content_preview={})",
+                    response.finish_reason,
+                    len(response.content or ""),
+                    (response.content or "")[:200],
+                )
+                return await self._fail_or_raw_archive(messages)
+
+            args = _normalize_save_memory_args(response.tool_calls[0].arguments)
+            if args is None or "summary_entry" not in args:
+                logger.warning(
+                    "Memory consolidation: unexpected save_supermemory_summary arguments"
+                )
+                return await self._fail_or_raw_archive(messages)
+
+            summary_entry = args.get("summary_entry")
+            if summary_entry is None:
+                logger.warning(
+                    "Memory consolidation: save_supermemory_summary payload contains null summary_entry"
+                )
+                return await self._fail_or_raw_archive(messages)
+
+            summary_entry = _ensure_text(summary_entry).strip()
+            if not summary_entry:
+                logger.warning("Memory consolidation: summary_entry is empty after normalization")
+                return await self._fail_or_raw_archive(messages)
+
+            if not summary_entry.startswith("["):
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                summary_entry = f"[{ts}] {summary_entry}"
+
+            if not await self.save_supermemory_summary(summary_entry):
+                logger.warning(
+                    "Memory consolidation: supermemory summary persistence failed for backend={}",
+                    self.backend,
+                )
+                return await self._fail_or_raw_archive(messages)
+
+            self._consecutive_failures = 0
+            logger.info("Supermemory summary consolidation done for {} messages", len(messages))
+            return True
+        except Exception:
+            logger.exception("Supermemory summary consolidation failed")
             return await self._fail_or_raw_archive(messages)
 
     async def _fail_or_raw_archive(self, messages: list[dict]) -> bool:

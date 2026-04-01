@@ -15,16 +15,15 @@ def _make_messages(message_count: int = 20) -> list[dict[str, str]]:
     ]
 
 
-def _make_tool_response(history_entry: str, memory_update: str) -> LLMResponse:
+def _make_summary_tool_response(summary_entry: str) -> LLMResponse:
     return LLMResponse(
         content=None,
         tool_calls=[
             ToolCallRequest(
                 id="call_1",
-                name="save_memory",
+                name="save_supermemory_summary",
                 arguments={
-                    "history_entry": history_entry,
-                    "memory_update": memory_update,
+                    "summary_entry": summary_entry,
                 },
             )
         ],
@@ -32,44 +31,35 @@ def _make_tool_response(history_entry: str, memory_update: str) -> LLMResponse:
 
 
 @pytest.mark.asyncio
-async def test_supermemory_backend_persists_snapshot_and_history(tmp_path: Path) -> None:
+async def test_supermemory_backend_persists_summary_only(tmp_path: Path) -> None:
     config = MemoryConfig(
         backend="supermemory",
         supermemory=SupermemoryConfig(api_key="sm_test_key", container_tag="workspace-test"),
     )
     store = MemoryStore(tmp_path, memory_config=config)
 
-    store._backend._supermemory_list_memories = AsyncMock(return_value=[])  # type: ignore[attr-defined]
     store._backend._supermemory_add_memory = AsyncMock(  # type: ignore[attr-defined]
-        side_effect=[
-            {"id": "snapshot_1", "status": "queued"},
-            {"id": "history_1", "status": "queued"},
-        ]
+        return_value={"id": "summary_1", "status": "queued"}
     )
 
     provider = AsyncMock()
     provider.chat_with_retry = AsyncMock(
-        return_value=_make_tool_response(
-            history_entry="[2026-01-01 10:00] Discussed launch checklist.",
-            memory_update="# Memory\nLaunch owner: Alice",
-        )
+        return_value=_make_summary_tool_response("[2026-01-01 10:00] Discussed launch checklist.")
     )
 
     result = await store.consolidate(_make_messages(), provider, "test-model")
 
     assert result is True
-    assert store.read_long_term() == "# Memory\nLaunch owner: Alice"
-    assert not store.history_file.exists()
-    assert not (tmp_path / "memory").exists()
 
-    first_call = store._backend._supermemory_add_memory.await_args_list[0]  # type: ignore[attr-defined]
-    assert first_call.kwargs.get("custom_id") is None
-    assert first_call.kwargs["metadata"]["kind"] == "snapshot"
-    assert first_call.kwargs["metadata"]["snapshot_key"] == store._backend._snapshot_custom_id()  # type: ignore[attr-defined]
+    store._backend._supermemory_add_memory.assert_awaited_once()  # type: ignore[attr-defined]
+    call = store._backend._supermemory_add_memory.await_args  # type: ignore[attr-defined]
+    assert call.kwargs.get("custom_id") is None
+    assert call.kwargs["metadata"]["kind"] == "summary_turn"
 
-    second_call = store._backend._supermemory_add_memory.await_args_list[1]  # type: ignore[attr-defined]
-    assert second_call.kwargs.get("custom_id") is None
-    assert second_call.kwargs["metadata"]["kind"] == "history"
+    with pytest.raises(RuntimeError):
+        _ = store.memory_file
+    with pytest.raises(RuntimeError):
+        _ = store.history_file
 
 
 @pytest.mark.asyncio

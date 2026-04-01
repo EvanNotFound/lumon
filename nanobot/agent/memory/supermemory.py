@@ -18,37 +18,16 @@ class SupermemoryMemoryBackend:
     def __init__(self, workspace: Path, config: MemoryConfig):
         self.workspace = workspace
         self.config = config
-        self.memory_dir = workspace / "memory"
-        self.memory_file = self.memory_dir / "MEMORY.md"
-        self.history_file = self.memory_dir / "HISTORY.md"
-        self._remote_long_term = ""
-        self._snapshot_id: str | None = None
-        self._snapshot_hydrated = False
         self._retrieved_context = ""
 
     def is_supermemory(self) -> bool:
         return True
 
-    def read_long_term(self) -> str:
-        return self._remote_long_term
-
-    def write_long_term(self, content: str) -> None:
-        self._remote_long_term = content
-
-    def append_history(self, entry: str) -> None:
-        del entry
-
     def get_memory_context(self) -> str:
-        parts: list[str] = []
-        if self._remote_long_term:
-            parts.append(f"## Long-term Memory\n{self._remote_long_term}")
-        if self._retrieved_context:
-            parts.append(f"## Retrieved Memory\n{self._retrieved_context}")
-        return "\n\n".join(parts)
+        return f"## Retrieved Memory\n{self._retrieved_context}" if self._retrieved_context else ""
 
     async def load_prompt_memory(self, query: str | None = None) -> None:
         self._retrieved_context = ""
-        await self._hydrate_snapshot_from_supermemory()
         if query:
             self._retrieved_context = await self._build_retrieved_context(query)
 
@@ -59,10 +38,6 @@ class SupermemoryMemoryBackend:
         workspace_key = str(self.workspace.expanduser().resolve())
         digest = hashlib.sha1(workspace_key.encode("utf-8")).hexdigest()[:16]
         return f"nanobot-workspace-{digest}"
-
-    def _snapshot_custom_id(self) -> str:
-        digest = hashlib.sha1(self._container_tag().encode("utf-8")).hexdigest()[:20]
-        return f"nanobot-snapshot-{digest}"
 
     def _build_supermemory_client(self) -> Any | None:
         api_key = self.config.supermemory.api_key.strip()
@@ -162,45 +137,6 @@ class SupermemoryMemoryBackend:
                 except Exception:
                     logger.debug("Ignoring supermemory client close error")
 
-    async def _supermemory_list_memories(self, *, limit: int = 50) -> list[dict[str, Any]] | None:
-        tag = self._container_tag()
-
-        async def _run(client: Any) -> Any:
-            documents = getattr(client, "documents", None)
-            list_fn = getattr(documents, "list", None)
-            if not callable(list_fn):
-                logger.warning("Supermemory SDK does not expose documents.list")
-                return None
-
-            return await self._await_if_needed(
-                list_fn(
-                    container_tags=[tag],
-                    include_content=True,
-                    limit=limit,
-                    sort="updatedAt",
-                    order="desc",
-                )
-            )
-
-        result = await self._with_supermemory_client("documents.list", _run)
-        if result is None:
-            return None
-        return self._extract_memories(result)
-
-    async def _supermemory_get_memory(self, memory_id: str) -> dict[str, Any] | None:
-        async def _run(client: Any) -> Any:
-            documents = getattr(client, "documents", None)
-            get_fn = getattr(documents, "get", None)
-            if not callable(get_fn):
-                logger.warning("Supermemory SDK does not expose documents.get")
-                return None
-            return await self._await_if_needed(get_fn(memory_id))
-
-        result = await self._with_supermemory_client("documents.get", _run)
-        if result is None:
-            return None
-        return self._object_to_dict(result)
-
     async def _supermemory_add_memory(
         self,
         *,
@@ -246,6 +182,12 @@ class SupermemoryMemoryBackend:
                 search_memories(
                     q=query,
                     container_tag=tag,
+                    filters={
+                        "OR": [
+                            {"key": "kind", "value": "summary_turn", "negate": False},
+                            {"key": "kind", "value": "raw_turn", "negate": False},
+                        ]
+                    },
                     limit=limit,
                     rewrite_query=True,
                 )
@@ -261,7 +203,10 @@ class SupermemoryMemoryBackend:
         lines: list[str] = []
         for idx, item in enumerate(matches, start=1):
             metadata = item.get("metadata")
-            if isinstance(metadata, dict) and metadata.get("kind") == "snapshot":
+            if isinstance(metadata, dict) and metadata.get("kind") not in {
+                "summary_turn",
+                "raw_turn",
+            }:
                 continue
             text = self._extract_item_text(item)
             if not text:
@@ -272,59 +217,9 @@ class SupermemoryMemoryBackend:
             lines.append(f"{idx}. {compact}")
         return "\n".join(lines)
 
-    async def _hydrate_snapshot_from_supermemory(self) -> None:
-        if self._snapshot_hydrated:
-            return
-
-        self._snapshot_hydrated = True
-        if self._remote_long_term:
-            return
-
-        if self._snapshot_id:
-            snapshot = await self._supermemory_get_memory(self._snapshot_id)
-            if snapshot is not None:
-                content = snapshot.get("content")
-                if isinstance(content, str) and content.strip():
-                    self._remote_long_term = content
-                    return
-
-        memories = await self._supermemory_list_memories(limit=50)
-        if memories is None:
-            return
-
-        snapshot_custom_id = self._snapshot_custom_id()
-        fallback_snapshot: dict[str, Any] | None = None
-
-        for memory in memories:
-            metadata = memory.get("metadata")
-            if not isinstance(metadata, dict) or metadata.get("kind") != "snapshot":
-                continue
-
-            memory_custom_id = memory.get("customId") or memory.get("custom_id")
-            if (
-                memory_custom_id == snapshot_custom_id
-                or metadata.get("snapshot_key") == snapshot_custom_id
-            ):
-                fallback_snapshot = memory
-                break
-
-            if fallback_snapshot is None:
-                fallback_snapshot = memory
-
-        if fallback_snapshot is None:
-            return
-
-        content = fallback_snapshot.get("content")
-        if isinstance(content, str) and content.strip():
-            self._remote_long_term = content
-        doc_id = fallback_snapshot.get("id")
-        if isinstance(doc_id, str) and doc_id:
-            self._snapshot_id = doc_id
-
-    async def _supermemory_add_history(self, entry: str, *, raw: bool = False) -> bool:
+    async def save_summary(self, entry: str) -> bool:
         payload = {
-            "kind": "history",
-            "raw": raw,
+            "kind": "summary_turn",
             "source": "nanobot",
             "workspace": self._container_tag(),
         }
@@ -340,48 +235,14 @@ class SupermemoryMemoryBackend:
         result = await self._supermemory_add_memory(content=entry, metadata=payload)
         return result is not None
 
-    async def _supermemory_upsert_snapshot(self, content: str) -> bool:
-        snapshot_custom_id = self._snapshot_custom_id()
-        metadata = {
-            "kind": "snapshot",
+    async def raw_archive(self, entry: str) -> None:
+        payload = {
+            "kind": "raw_archive",
             "source": "nanobot",
             "workspace": self._container_tag(),
-            "snapshot_key": snapshot_custom_id,
         }
-        created = await self._supermemory_add_memory(
-            content=content,
-            metadata=metadata,
-        )
-        if created is None:
-            return False
-
-        doc_id = created.get("id") if isinstance(created, dict) else None
-        if isinstance(doc_id, str) and doc_id:
-            self._snapshot_id = doc_id
-        logger.debug(
-            "Supermemory snapshot appended: id={}, workspace={}",
-            self._snapshot_id or "?",
-            self._container_tag(),
-        )
-        return True
-
-    async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
-        current_memory = self.read_long_term()
-        if memory_update != current_memory:
-            if not await self._supermemory_upsert_snapshot(memory_update):
-                return False
-            self._remote_long_term = memory_update
-        if not await self._supermemory_add_history(history_entry):
-            return False
-        logger.debug(
-            "Supermemory consolidation persisted for workspace={} (snapshot_changed={})",
-            self._container_tag(),
-            memory_update != current_memory,
-        )
-        return True
-
-    async def raw_archive(self, entry: str) -> None:
-        if not await self._supermemory_add_history(entry, raw=True):
+        result = await self._supermemory_add_memory(content=entry, metadata=payload)
+        if result is None:
             logger.warning(
                 "Memory consolidation degraded: failed raw archive for workspace={}",
                 self._container_tag(),
