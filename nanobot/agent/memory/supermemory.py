@@ -199,7 +199,7 @@ class SupermemoryMemoryBackend:
         return self._extract_memories(result)
 
     async def _build_retrieved_context(self, query: str) -> str:
-        matches = await self._supermemory_search_memories(query, limit=5)
+        matches = await self._supermemory_search_memories(query, limit=10)
         lines: list[str] = []
         for idx, item in enumerate(matches, start=1):
             metadata = item.get("metadata")
