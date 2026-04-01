@@ -71,8 +71,8 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
-    _MEMORY_RETRIEVAL_HISTORY_LIMIT = 6
-    _MEMORY_RETRIEVAL_MAX_CHARS = 400
+    _MEMORY_RETRIEVAL_HISTORY_LIMIT = 4
+    _MEMORY_RETRIEVAL_MAX_CHARS = 800
 
     def __init__(
         self,
