@@ -331,6 +331,15 @@ class SupermemoryMemoryBackend:
         result = await self._supermemory_add_memory(content=entry, metadata=payload)
         return result is not None
 
+    async def save_raw_turn(self, entry: str) -> bool:
+        payload = {
+            "kind": "raw_turn",
+            "source": "nanobot",
+            "workspace": self._container_tag(),
+        }
+        result = await self._supermemory_add_memory(content=entry, metadata=payload)
+        return result is not None
+
     async def _supermemory_upsert_snapshot(self, content: str) -> bool:
         snapshot_custom_id = self._snapshot_custom_id()
         metadata = {

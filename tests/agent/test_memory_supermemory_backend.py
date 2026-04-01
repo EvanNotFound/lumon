@@ -70,3 +70,28 @@ async def test_supermemory_backend_persists_snapshot_and_history(tmp_path: Path)
     second_call = store._backend._supermemory_add_memory.await_args_list[1]  # type: ignore[attr-defined]
     assert second_call.kwargs.get("custom_id") is None
     assert second_call.kwargs["metadata"]["kind"] == "history"
+
+
+@pytest.mark.asyncio
+async def test_supermemory_backend_persists_raw_turn_document(tmp_path: Path) -> None:
+    config = MemoryConfig(
+        backend="supermemory",
+        supermemory=SupermemoryConfig(api_key="sm_test_key", container_tag="workspace-test"),
+    )
+    store = MemoryStore(tmp_path, memory_config=config)
+    store._backend._supermemory_add_memory = AsyncMock(  # type: ignore[attr-defined]
+        return_value={"id": "raw_1", "status": "queued"}
+    )
+
+    result = await store.save_raw_turn(
+        [
+            {"role": "user", "content": "essay"},
+            {"role": "assistant", "content": "reviewed"},
+        ]
+    )
+
+    assert result is True
+    store._backend._supermemory_add_memory.assert_awaited_once()  # type: ignore[attr-defined]
+    call = store._backend._supermemory_add_memory.await_args  # type: ignore[attr-defined]
+    assert call.kwargs["metadata"]["kind"] == "raw_turn"
+    assert "[TURN] 2 messages" in call.kwargs["content"]

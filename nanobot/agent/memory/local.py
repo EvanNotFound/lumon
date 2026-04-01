@@ -46,5 +46,9 @@ class LocalMemoryBackend:
             self.write_long_term(memory_update)
         return True
 
+    async def save_raw_turn(self, entry: str) -> bool:
+        del entry
+        return True
+
     async def raw_archive(self, entry: str) -> None:
         self.append_history(entry)

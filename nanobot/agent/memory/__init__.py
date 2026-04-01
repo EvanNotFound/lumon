@@ -7,7 +7,7 @@ import json
 import weakref
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from loguru import logger
 
@@ -57,16 +57,17 @@ _MEMORY_DECISION_TOOL = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "should_persist": {
-                        "type": "boolean",
-                        "description": "true when the exchange contains durable information worth persisting immediately; false for transient or low-value exchanges.",
+                    "action": {
+                        "type": "string",
+                        "enum": ["skip", "consolidate", "both"],
+                        "description": "Persistence action: skip, consolidate, or both.",
                     },
                     "reason": {
                         "type": "string",
                         "description": "Short explanation of the decision.",
                     },
                 },
-                "required": ["should_persist"],
+                "required": ["action"],
             },
         },
     }
@@ -74,9 +75,12 @@ _MEMORY_DECISION_TOOL = [
 
 _MEMORY_DECISION_SYSTEM_PROMPT = """You are a durable-memory gate for an assistant.
 
-Call the memory_decision tool to decide whether the completed exchange should be persisted immediately.
+Call the memory_decision tool with exactly one action:
+- skip: do not persist this exchange
+- consolidate: persist only a durable summary memory
+- both: persist a durable summary and the full raw turn text
 
-Persist exchanges that contain durable information such as:
+Use consolidate for durable information such as:
 - stable user identity facts, aliases, handles, or preferences
 - lasting communication or behavior rules
 - recurring mappings or personalized instructions
@@ -85,17 +89,24 @@ Persist exchanges that contain durable information such as:
 - corrections to stale assumptions that would otherwise cause repeated mistakes
 - instruction or procedure updates that should influence future behavior
 
-Do not persist exchanges that are mainly:
+Use both when durable memory is needed and the exact wording/detail is likely useful later,
+especially long-form content such as essays, specs, detailed notes, and meeting writeups.
+
+Use skip for exchanges that are mainly:
 - one-off chatter or acknowledgements
 - transient task details or temporary troubleshooting
 - routine back-and-forth with no durable takeaway
 - low-value wording noise that does not affect future behavior
 
 Examples:
-- Persist: "The old missing EMAIL_HEARTBEAT.md note is fixed; treat it as resolved."
-- Persist: "Use this repo naming rule for future PR titles."
-- Skip: "I reran the command and got a timeout once."
-- Skip: "Thanks"""
+- consolidate: "Use this repo naming rule for future PR titles."
+- both: "Here is my 600-word essay on launch risks; remember this for later review."
+- skip: "I reran the command and got a timeout once."
+- skip: "Thanks"""
+
+MemoryDecisionAction = Literal["skip", "consolidate", "both"]
+_MEMORY_DECISION_DEFAULT_ACTION: MemoryDecisionAction = "skip"
+_MEMORY_DECISION_ACTIONS: tuple[MemoryDecisionAction, ...] = ("skip", "consolidate", "both")
 
 
 def _ensure_text(value: Any) -> str:
@@ -173,6 +184,13 @@ class MemoryStore:
 
     async def save_consolidation(self, history_entry: str, memory_update: str) -> bool:
         return await self._backend.save_consolidation(history_entry, memory_update)
+
+    async def save_raw_turn(self, messages: list[dict[str, object]]) -> bool:
+        if not messages:
+            return True
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        entry = f"[{ts}] [TURN] {len(messages)} messages\n{self._format_messages(messages)}"
+        return await self._backend.save_raw_turn(entry)
 
     @staticmethod
     def _format_messages(messages: list[dict]) -> str:
@@ -394,10 +412,12 @@ class MemoryConsolidator:
         )
         return True
 
-    async def should_remember_turn(self, messages: list[dict[str, object]]) -> bool:
-        """Use the model to judge whether a completed exchange deserves immediate persistence."""
+    async def decide_turn_memory_action(
+        self, messages: list[dict[str, object]]
+    ) -> MemoryDecisionAction:
+        """Use the model to pick immediate persistence action for a completed exchange."""
         if not messages:
-            return False
+            return _MEMORY_DECISION_DEFAULT_ACTION
 
         prompt = f"""Review this completed exchange and call the memory_decision tool.
 
@@ -440,23 +460,27 @@ class MemoryConsolidator:
                     response.finish_reason,
                     (response.content or "")[:200],
                 )
-                return False
+                return _MEMORY_DECISION_DEFAULT_ACTION
 
             args = _normalize_save_memory_args(response.tool_calls[0].arguments)
-            if args is None or "should_persist" not in args:
+            if args is None or "action" not in args:
                 logger.warning("Memory decision: unexpected memory_decision arguments")
-                return False
+                return _MEMORY_DECISION_DEFAULT_ACTION
 
-            should_persist = bool(args.get("should_persist"))
+            action = str(args.get("action", "")).strip().lower()
+            if action not in _MEMORY_DECISION_ACTIONS:
+                logger.warning("Memory decision: invalid action '{}', defaulting to skip", action)
+                return _MEMORY_DECISION_DEFAULT_ACTION
+
             logger.info(
-                "Memory decision: should_persist={}, reason={}",
-                should_persist,
+                "Memory decision: action={}, reason={}",
+                action,
                 _ensure_text(args.get("reason", ""))[:200],
             )
-            return should_persist
+            return cast(MemoryDecisionAction, action)
         except Exception:
             logger.exception("Memory decision failed")
-            return False
+            return _MEMORY_DECISION_DEFAULT_ACTION
 
     async def process_post_turn_memory(
         self,
@@ -467,9 +491,14 @@ class MemoryConsolidator:
         lock = self.get_lock(session_key)
         async with lock:
             if messages:
-                should_persist = await self.should_remember_turn(messages)
-                if should_persist:
+                action = await self.decide_turn_memory_action(messages)
+                if action in {"consolidate", "both"}:
                     await self.remember_messages(messages)
+                    if action == "both" and not await self.store.save_raw_turn(messages):
+                        logger.warning(
+                            "Memory post-turn: failed raw-turn persistence for session {}",
+                            session_key,
+                        )
                 else:
                     logger.debug(
                         "Memory post-turn: skipped immediate persistence for session {}",

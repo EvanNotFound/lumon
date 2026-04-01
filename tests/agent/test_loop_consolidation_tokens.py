@@ -255,12 +255,12 @@ async def test_process_direct_schedules_post_turn_memory_in_background(tmp_path)
         scheduled.append((coro, label))
 
     loop._schedule_background = capture_background  # type: ignore[method-assign]
-    loop.memory_consolidator.should_remember_turn = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    loop.memory_consolidator.decide_turn_memory_action = AsyncMock(return_value="consolidate")  # type: ignore[method-assign]
 
     response = await loop.process_direct("my online handle is evannotfound", session_key="cli:test")
 
     assert response is not None
-    loop.memory_consolidator.should_remember_turn.assert_not_awaited()
+    loop.memory_consolidator.decide_turn_memory_action.assert_not_awaited()
     assert len(scheduled) == 1
     coro, label = scheduled[0]
     assert label == "post-turn memory"
@@ -273,9 +273,9 @@ async def test_process_post_turn_memory_orders_judge_remember_then_consolidate(t
     loop.sessions.save(loop.sessions.get_or_create("cli:test"))
     order: list[str] = []
 
-    async def track_should(_messages) -> bool:
+    async def track_decide(_messages) -> str:
         order.append("judge")
-        return True
+        return "consolidate"
 
     async def track_remember(_messages) -> bool:
         order.append("remember")
@@ -284,7 +284,7 @@ async def test_process_post_turn_memory_orders_judge_remember_then_consolidate(t
     async def track_consolidate(_session) -> None:
         order.append("consolidate")
 
-    loop.memory_consolidator.should_remember_turn = track_should  # type: ignore[method-assign]
+    loop.memory_consolidator.decide_turn_memory_action = track_decide  # type: ignore[method-assign]
     loop.memory_consolidator.remember_messages = track_remember  # type: ignore[method-assign]
     loop.memory_consolidator._consolidate_session_if_needed_locked = track_consolidate  # type: ignore[method-assign]
 
@@ -303,7 +303,7 @@ async def test_process_post_turn_memory_orders_judge_remember_then_consolidate(t
 async def test_process_post_turn_memory_false_skips_remember(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
     loop.sessions.save(loop.sessions.get_or_create("cli:test"))
-    loop.memory_consolidator.should_remember_turn = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop.memory_consolidator.decide_turn_memory_action = AsyncMock(return_value="skip")  # type: ignore[method-assign]
     loop.memory_consolidator.remember_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
     loop.memory_consolidator._consolidate_session_if_needed_locked = AsyncMock()  # type: ignore[method-assign]
 
@@ -320,7 +320,29 @@ async def test_process_post_turn_memory_false_skips_remember(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_memory_decision_returns_true_from_tool_call(tmp_path) -> None:
+async def test_process_post_turn_memory_both_stores_raw_turn(tmp_path) -> None:
+    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
+    loop.sessions.save(loop.sessions.get_or_create("cli:test"))
+    loop.memory_consolidator.decide_turn_memory_action = AsyncMock(return_value="both")  # type: ignore[method-assign]
+    loop.memory_consolidator.remember_messages = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    loop.memory_consolidator.store.save_raw_turn = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    loop.memory_consolidator._consolidate_session_if_needed_locked = AsyncMock()  # type: ignore[method-assign]
+
+    await loop.memory_consolidator.process_post_turn_memory(
+        "cli:test",
+        [
+            {"role": "user", "content": "my draft essay"},
+            {"role": "assistant", "content": "got it"},
+        ],
+    )
+
+    loop.memory_consolidator.remember_messages.assert_awaited_once()
+    loop.memory_consolidator.store.save_raw_turn.assert_awaited_once()  # type: ignore[attr-defined]
+    loop.memory_consolidator._consolidate_session_if_needed_locked.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_model_memory_decision_returns_action_from_tool_call(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
     loop.provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(
@@ -329,32 +351,32 @@ async def test_model_memory_decision_returns_true_from_tool_call(tmp_path) -> No
                 ToolCallRequest(
                     id="call_1",
                     name="memory_decision",
-                    arguments={"should_persist": True, "reason": "durable user identity fact"},
+                    arguments={"action": "consolidate", "reason": "durable user identity fact"},
                 )
             ],
         )
     )
 
-    result = await loop.memory_consolidator.should_remember_turn(
+    result = await loop.memory_consolidator.decide_turn_memory_action(
         [
             {"role": "user", "content": "my handle is evannotfound"},
             {"role": "assistant", "content": "I'll remember that."},
         ]
     )
 
-    assert result is True
+    assert result == "consolidate"
 
 
 @pytest.mark.asyncio
-async def test_model_memory_decision_without_tool_call_defaults_false(tmp_path) -> None:
+async def test_model_memory_decision_without_tool_call_defaults_skip(tmp_path) -> None:
     loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="no", tool_calls=[]))
 
-    result = await loop.memory_consolidator.should_remember_turn(
+    result = await loop.memory_consolidator.decide_turn_memory_action(
         [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
     )
 
-    assert result is False
+    assert result == "skip"
