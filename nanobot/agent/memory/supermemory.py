@@ -84,11 +84,7 @@ class SupermemoryMemoryBackend:
         if base_url:
             kwargs["base_url"] = base_url
 
-        try:
-            return AsyncSupermemory(**kwargs)
-        except TypeError:
-            kwargs.pop("base_url", None)
-            return AsyncSupermemory(**kwargs)
+        return AsyncSupermemory(**kwargs)
 
     @staticmethod
     async def _await_if_needed(value: Any) -> Any:
@@ -176,25 +172,15 @@ class SupermemoryMemoryBackend:
                 logger.warning("Supermemory SDK does not expose documents.list")
                 return None
 
-            try:
-                return await self._await_if_needed(
-                    list_fn(
-                        container_tags=[tag],
-                        include_content=True,
-                        limit=limit,
-                        sort="updatedAt",
-                        order="desc",
-                    )
+            return await self._await_if_needed(
+                list_fn(
+                    container_tags=[tag],
+                    include_content=True,
+                    limit=limit,
+                    sort="updatedAt",
+                    order="desc",
                 )
-            except TypeError:
-                return await self._await_if_needed(
-                    list_fn(
-                        container_tags=[tag],
-                        limit=limit,
-                        sort="updatedAt",
-                        order="desc",
-                    )
-                )
+            )
 
         result = await self._with_supermemory_client("documents.list", _run)
         if result is None:
@@ -230,29 +216,14 @@ class SupermemoryMemoryBackend:
                 logger.warning("Supermemory SDK does not expose add")
                 return None
 
-            base_variants = [
-                {"container_tag": tag, "metadata": metadata},
-                {"container_tags": [tag], "metadata": metadata},
-                {"container_tag": tag},
-                {"container_tags": [tag]},
-            ]
-
-            for base_kwargs in base_variants:
-                if custom_id:
-                    for key in ("custom_id", "customId"):
-                        kwargs = {**base_kwargs, key: custom_id}
-                        try:
-                            return await self._await_if_needed(add_fn(content=content, **kwargs))
-                        except TypeError:
-                            continue
-
-                try:
-                    return await self._await_if_needed(add_fn(content=content, **base_kwargs))
-                except TypeError:
-                    continue
-
-            logger.warning("Supermemory add failed for all supported call shapes")
-            return None
+            kwargs: dict[str, Any] = {
+                "content": content,
+                "container_tag": tag,
+                "metadata": metadata,
+            }
+            if custom_id:
+                kwargs["custom_id"] = custom_id
+            return await self._await_if_needed(add_fn(**kwargs))
 
         result = await self._with_supermemory_client("add", _run)
         if result is None:
@@ -271,32 +242,14 @@ class SupermemoryMemoryBackend:
                 logger.warning("Supermemory SDK does not expose search.memories")
                 return None
 
-            try:
-                return await self._await_if_needed(
-                    search_memories(
-                        q=query,
-                        container_tag=tag,
-                        limit=limit,
-                        rewrite_query=True,
-                    )
+            return await self._await_if_needed(
+                search_memories(
+                    q=query,
+                    container_tag=tag,
+                    limit=limit,
+                    rewrite_query=True,
                 )
-            except TypeError:
-                try:
-                    return await self._await_if_needed(
-                        search_memories(
-                            q=query,
-                            container_tag=tag,
-                            limit=limit,
-                        )
-                    )
-                except TypeError:
-                    return await self._await_if_needed(
-                        search_memories(
-                            q=query,
-                            container_tags=[tag],
-                            limit=limit,
-                        )
-                    )
+            )
 
         result = await self._with_supermemory_client("search.memories", _run)
         if result is None:
