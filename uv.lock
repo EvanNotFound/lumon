@@ -1641,6 +1641,7 @@ dependencies = [
     { name = "slack-sdk" },
     { name = "slackify-markdown" },
     { name = "socksio" },
+    { name = "supermemory" },
     { name = "tiktoken" },
     { name = "typer" },
     { name = "websocket-client" },
@@ -1715,6 +1716,7 @@ requires-dist = [
     { name = "slack-sdk", specifier = ">=3.39.0,<4.0.0" },
     { name = "slackify-markdown", specifier = ">=0.2.0,<1.0.0" },
     { name = "socksio", specifier = ">=1.0.0,<2.0.0" },
+    { name = "supermemory", specifier = ">=0.0.1" },
     { name = "tiktoken", specifier = ">=0.12.0,<1.0.0" },
     { name = "typer", specifier = ">=0.20.0,<1.0.0" },
     { name = "websocket-client", specifier = ">=1.9.0,<2.0.0" },
@@ -2975,6 +2977,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "supermemory"
+version = "3.32.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/96/fbce2d09b4fe09a58fe7b7663d42554d89b4404bcbfd8765202ffdf46155/supermemory-3.32.0.tar.gz", hash = "sha256:b1aaf88398372ed442c4c1880c5e24662e9466531e16ea7d410c535738aeccd1", size = 164063, upload-time = "2026-03-29T06:29:39.428Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/84/a56aec56db2f9e648d9aa02bdb8f97e75b0a6538d71348c29751af12d916/supermemory-3.32.0-py3-none-any.whl", hash = "sha256:b52df1d6a2d214b5f5f7b562c7dc0ec30a8d826d9f6d1c53a70259e08059b5fb", size = 147786, upload-time = "2026-03-29T06:29:37.995Z" },
 ]
 
 [[package]]

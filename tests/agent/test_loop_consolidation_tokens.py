@@ -236,8 +236,9 @@ async def test_load_prompt_memory_uses_current_message(tmp_path) -> None:
 
     loop.context.memory.load_prompt_memory.assert_awaited_once()
     retrieval_query = loop.context.memory.load_prompt_memory.await_args.args[0]
-    assert "oldest" not in retrieval_query
-    for value in ("keep1", "keep2", "keep3", "keep4", "keep5", "keep6", "current message"):
+    for value in ("oldest", "keep1", "keep2"):
+        assert value not in retrieval_query
+    for value in ("keep3", "keep4", "keep5", "keep6", "current message"):
         assert value in retrieval_query
 
     for coro, _label in scheduled:
