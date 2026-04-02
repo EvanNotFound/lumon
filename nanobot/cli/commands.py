@@ -415,6 +415,13 @@ def _make_provider(config: Config):
     spec = find_by_name(provider_name) if provider_name else None
     backend = spec.backend if spec else "openai_compat"
 
+    if backend == "openai_compat" and spec and p:
+        api_mode = p.api_mode
+        if spec.name == "openai" and api_mode != "chat":
+            backend = "openai_responses"
+        elif spec.name == "custom" and api_mode == "responses":
+            backend = "openai_responses"
+
     # --- validation ---
     if backend == "azure_openai":
         if not p or not p.api_key or not p.api_base:
@@ -422,7 +429,7 @@ def _make_provider(config: Config):
             console.print("Set them in ~/.nanobot/config.json under providers.azure_openai section")
             console.print("Use the model field to specify the deployment name.")
             raise typer.Exit(1)
-    elif backend == "openai_compat" and not model.startswith("bedrock/"):
+    elif backend in {"openai_compat", "openai_responses"} and not model.startswith("bedrock/"):
         needs_key = not (p and p.api_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
@@ -451,6 +458,17 @@ def _make_provider(config: Config):
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
+        )
+    elif backend == "openai_responses":
+        from nanobot.providers.openai_responses_provider import OpenAIResponsesProvider
+
+        provider = OpenAIResponsesProvider(
+            api_key=p.api_key if p else None,
+            api_base=config.get_api_base(model),
+            default_model=model,
+            extra_headers=p.extra_headers if p else None,
+            prompt_cache_retention=p.prompt_cache_retention if p else None,
+            spec=spec,
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider

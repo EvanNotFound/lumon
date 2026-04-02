@@ -31,21 +31,49 @@ def test_custom_provider_parse_accepts_dict_response() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
-    result = provider._parse({
-        "choices": [{
-            "message": {"content": "hello from dict"},
-            "finish_reason": "stop",
-        }],
-        "usage": {
-            "prompt_tokens": 1,
-            "completion_tokens": 2,
-            "total_tokens": 3,
-        },
-    })
+    result = provider._parse(
+        {
+            "choices": [
+                {
+                    "message": {"content": "hello from dict"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2,
+                "total_tokens": 3,
+            },
+        }
+    )
 
     assert result.finish_reason == "stop"
     assert result.content == "hello from dict"
     assert result.usage["total_tokens"] == 3
+
+
+def test_custom_provider_parse_keeps_cached_tokens_when_present() -> None:
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider()
+
+    result = provider._parse(
+        {
+            "choices": [
+                {
+                    "message": {"content": "hello from dict"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 4,
+                "completion_tokens": 2,
+                "total_tokens": 6,
+                "prompt_tokens_details": {"cached_tokens": 3},
+            },
+        }
+    )
+
+    assert result.usage["cached_tokens"] == 3
 
 
 def test_custom_provider_parse_chunks_accepts_plain_text_chunks() -> None:

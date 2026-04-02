@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, AsyncGenerator
@@ -13,6 +12,13 @@ from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.openai_responses_common import (
+    build_prompt_cache_key,
+    convert_messages_to_responses,
+    convert_responses_tools,
+    map_responses_finish_reason,
+    strip_tool_call_item_id,
+)
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "nanobot"
@@ -37,6 +43,7 @@ class OpenAICodexProvider(LLMProvider):
         """Shared request logic for both chat() and chat_stream()."""
         model = model or self.default_model
         system_prompt, input_items = _convert_messages(messages)
+        converted_tools = _convert_tools(tools)
 
         token = await asyncio.to_thread(get_codex_token)
         headers = _build_headers(token.account_id, token.access)
@@ -49,19 +56,22 @@ class OpenAICodexProvider(LLMProvider):
             "input": input_items,
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": _prompt_cache_key(messages),
+            "prompt_cache_key": _prompt_cache_key(model, system_prompt, converted_tools),
             "tool_choice": tool_choice or "auto",
             "parallel_tool_calls": True,
         }
         if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
-        if tools:
-            body["tools"] = _convert_tools(tools)
+        if converted_tools:
+            body["tools"] = converted_tools
 
         try:
             try:
                 content, tool_calls, finish_reason = await _request_codex(
-                    DEFAULT_CODEX_URL, headers, body, verify=True,
+                    DEFAULT_CODEX_URL,
+                    headers,
+                    body,
+                    verify=True,
                     on_content_delta=on_content_delta,
                 )
             except Exception as e:
@@ -69,7 +79,10 @@ class OpenAICodexProvider(LLMProvider):
                     raise
                 logger.warning("SSL verification failed for Codex API; retrying with verify=False")
                 content, tool_calls, finish_reason = await _request_codex(
-                    DEFAULT_CODEX_URL, headers, body, verify=False,
+                    DEFAULT_CODEX_URL,
+                    headers,
+                    body,
+                    verify=False,
                     on_content_delta=on_content_delta,
                 )
             return LLMResponse(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
@@ -77,21 +90,31 @@ class OpenAICodexProvider(LLMProvider):
             return LLMResponse(content=f"Error calling Codex: {e}", finish_reason="error")
 
     async def chat(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
-        model: str | None = None, max_tokens: int = 4096, temperature: float = 0.7,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
         return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice)
 
     async def chat_stream(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
-        model: str | None = None, max_tokens: int = 4096, temperature: float = 0.7,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice, on_content_delta)
+        return await self._call_codex(
+            messages, tools, model, reasoning_effort, tool_choice, on_content_delta
+        )
 
     def get_default_model(self) -> str:
         return self.default_model
@@ -126,102 +149,33 @@ async def _request_codex(
         async with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 text = await response.aread()
-                raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
+                raise RuntimeError(
+                    _friendly_error(response.status_code, text.decode("utf-8", "ignore"))
+                )
             return await _consume_sse(response, on_content_delta)
 
 
 def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert OpenAI function-calling schema to Codex flat format."""
-    converted: list[dict[str, Any]] = []
-    for tool in tools:
-        fn = (tool.get("function") or {}) if tool.get("type") == "function" else tool
-        name = fn.get("name")
-        if not name:
-            continue
-        params = fn.get("parameters") or {}
-        converted.append({
-            "type": "function",
-            "name": name,
-            "description": fn.get("description") or "",
-            "parameters": params if isinstance(params, dict) else {},
-        })
-    return converted
+    return convert_responses_tools(tools)
 
 
 def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    system_prompt = ""
-    input_items: list[dict[str, Any]] = []
-
-    for idx, msg in enumerate(messages):
-        role = msg.get("role")
-        content = msg.get("content")
-
-        if role == "system":
-            system_prompt = content if isinstance(content, str) else ""
-            continue
-
-        if role == "user":
-            input_items.append(_convert_user_message(content))
-            continue
-
-        if role == "assistant":
-            if isinstance(content, str) and content:
-                input_items.append({
-                    "type": "message", "role": "assistant",
-                    "content": [{"type": "output_text", "text": content}],
-                    "status": "completed", "id": f"msg_{idx}",
-                })
-            for tool_call in msg.get("tool_calls", []) or []:
-                fn = tool_call.get("function") or {}
-                call_id, item_id = _split_tool_call_id(tool_call.get("id"))
-                input_items.append({
-                    "type": "function_call",
-                    "id": item_id or f"fc_{idx}",
-                    "call_id": call_id or f"call_{idx}",
-                    "name": fn.get("name"),
-                    "arguments": fn.get("arguments") or "{}",
-                })
-            continue
-
-        if role == "tool":
-            call_id, _ = _split_tool_call_id(msg.get("tool_call_id"))
-            output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-            input_items.append({"type": "function_call_output", "call_id": call_id, "output": output_text})
-
-    return system_prompt, input_items
-
-
-def _convert_user_message(content: Any) -> dict[str, Any]:
-    if isinstance(content, str):
-        return {"role": "user", "content": [{"type": "input_text", "text": content}]}
-    if isinstance(content, list):
-        converted: list[dict[str, Any]] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "text":
-                converted.append({"type": "input_text", "text": item.get("text", "")})
-            elif item.get("type") == "image_url":
-                url = (item.get("image_url") or {}).get("url")
-                if url:
-                    converted.append({"type": "input_image", "image_url": url, "detail": "auto"})
-        if converted:
-            return {"role": "user", "content": converted}
-    return {"role": "user", "content": [{"type": "input_text", "text": ""}]}
+    return convert_messages_to_responses(messages)
 
 
 def _split_tool_call_id(tool_call_id: Any) -> tuple[str, str | None]:
-    if isinstance(tool_call_id, str) and tool_call_id:
-        if "|" in tool_call_id:
-            call_id, item_id = tool_call_id.split("|", 1)
-            return call_id, item_id or None
-        return tool_call_id, None
-    return "call_0", None
+    return strip_tool_call_item_id(tool_call_id)
 
 
-def _prompt_cache_key(messages: list[dict[str, Any]]) -> str:
-    raw = json.dumps(messages, ensure_ascii=True, sort_keys=True)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def _prompt_cache_key(model: str, system_prompt: str, tools: list[dict[str, Any]]) -> str:
+    return build_prompt_cache_key(
+        provider_name="openai_codex",
+        api_base=DEFAULT_CODEX_URL,
+        model_name=_strip_model_prefix(model),
+        instructions=system_prompt,
+        tools=tools,
+    )
 
 
 async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:
@@ -229,7 +183,9 @@ async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], 
     async for line in response.aiter_lines():
         if line == "":
             if buffer:
-                data_lines = [l[5:].strip() for l in buffer if l.startswith("data:")]
+                data_lines = [
+                    line_item[5:].strip() for line_item in buffer if line_item.startswith("data:")
+                ]
                 buffer = []
                 if not data_lines:
                     continue
@@ -307,11 +263,16 @@ async def _consume_sse(
     return content, tool_calls, finish_reason
 
 
-_FINISH_REASON_MAP = {"completed": "stop", "incomplete": "length", "failed": "error", "cancelled": "error"}
+_FINISH_REASON_MAP = {
+    "completed": "stop",
+    "incomplete": "length",
+    "failed": "error",
+    "cancelled": "error",
+}
 
 
 def _map_finish_reason(status: str | None) -> str:
-    return _FINISH_REASON_MAP.get(status or "completed", "stop")
+    return map_responses_finish_reason(status)
 
 
 def _friendly_error(status_code: int, raw: str) -> str:

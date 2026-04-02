@@ -370,6 +370,70 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
 
 
+def test_make_provider_routes_openai_to_responses_provider_by_default():
+    from nanobot.providers.openai_responses_provider import OpenAIResponsesProvider
+
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "openai", "model": "gpt-5"}},
+            "providers": {
+                "openai": {
+                    "apiKey": "test-key",
+                    "apiBase": "https://proxy.example/v1",
+                }
+            },
+        }
+    )
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI"):
+        provider = _make_provider(config)
+
+    assert isinstance(provider, OpenAIResponsesProvider)
+
+
+def test_make_provider_keeps_custom_on_chat_mode_by_default():
+    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "custom", "model": "gpt-4o-mini"}},
+            "providers": {
+                "custom": {
+                    "apiKey": "test-key",
+                    "apiBase": "https://example.com/v1",
+                }
+            },
+        }
+    )
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = _make_provider(config)
+
+    assert isinstance(provider, OpenAICompatProvider)
+
+
+def test_make_provider_can_opt_custom_into_responses_mode():
+    from nanobot.providers.openai_responses_provider import OpenAIResponsesProvider
+
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "custom", "model": "gpt-4o-mini"}},
+            "providers": {
+                "custom": {
+                    "apiKey": "test-key",
+                    "apiBase": "https://example.com/v1",
+                    "apiMode": "responses",
+                }
+            },
+        }
+    )
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI"):
+        provider = _make_provider(config)
+
+    assert isinstance(provider, OpenAIResponsesProvider)
+
+
 @pytest.fixture
 def mock_agent_runtime(tmp_path):
     """Mock agent command dependencies for focused CLI tests."""

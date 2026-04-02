@@ -98,6 +98,10 @@ class AgentRunner:
                 "prompt_tokens": int(raw_usage.get("prompt_tokens", 0) or 0),
                 "completion_tokens": int(raw_usage.get("completion_tokens", 0) or 0),
             }
+            for key, value in raw_usage.items():
+                if key in usage or not isinstance(value, (int, float)):
+                    continue
+                usage[key] = int(value)
             context.response = response
             context.usage = usage
             context.tool_calls = list(response.tool_calls)

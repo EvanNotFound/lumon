@@ -230,7 +230,26 @@ class TestRestartCommand:
 
         assert response is not None
         assert "Tokens: 1200 in / 34 out" in response.content
+        assert "Cache: unavailable" in response.content
         assert "Context: 1k/64k (1%)" in response.content
+
+    @pytest.mark.asyncio
+    async def test_status_reports_cached_prompt_tokens_when_available(self):
+        loop, _bus = _make_loop()
+        session = MagicMock()
+        session.get_history.return_value = [{"role": "user"}]
+        loop.sessions.get_or_create.return_value = session
+        loop._last_usage = {"prompt_tokens": 100, "completion_tokens": 10, "cached_tokens": 64}
+        loop.memory_consolidator.estimate_session_prompt_tokens = MagicMock(
+            return_value=(0, "none")
+        )
+
+        response = await loop._process_message(
+            InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="/status")
+        )
+
+        assert response is not None
+        assert "Cache: 64 cached prompt tokens" in response.content
 
     @pytest.mark.asyncio
     async def test_process_direct_preserves_render_metadata(self):
