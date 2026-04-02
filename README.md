@@ -968,6 +968,58 @@ nanobot agent -c ~/.nanobot-telegram/config.json -w /tmp/nanobot-telegram-test -
 </details>
 
 <details>
+<summary><b>OpenAI (direct or via your own proxy)</b></summary>
+
+Use provider `openai` for direct OpenAI usage or for an OpenAI-compatible proxy that should keep OpenAI semantics.
+
+Responses API is used by default for `provider: "openai"` unless you explicitly set `"apiMode": "chat"`.
+
+```json
+{
+  "providers": {
+    "openai": {
+      "apiKey": "your-openai-api-key",
+      "apiBase": "https://api.openai.com/v1",
+      "promptCacheRetention": "24h"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "provider": "openai",
+      "model": "gpt-5"
+    }
+  }
+}
+```
+
+If you use your own OpenAI proxy, keep `provider: "openai"` and point `apiBase` at the proxy:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "apiKey": "your-proxy-api-key",
+      "apiBase": "https://your-proxy.example/v1",
+      "apiMode": "responses",
+      "promptCacheRetention": "24h"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "provider": "openai",
+      "model": "gpt-5"
+    }
+  }
+}
+```
+
+Valid values:
+- `apiMode`: `auto`, `chat`, `responses`
+- `promptCacheRetention`: `in-memory`, `24h`
+
+</details>
+
+<details>
 <summary><b>Custom Provider (Any OpenAI-compatible API)</b></summary>
 
 Connects directly to any OpenAI-compatible endpoint — LM Studio, llama.cpp, Together AI, Fireworks, Azure OpenAI, or any self-hosted server. Model name is passed as-is.
@@ -989,6 +1041,29 @@ Connects directly to any OpenAI-compatible endpoint — LM Studio, llama.cpp, To
 ```
 
 > For local servers that don't require a key, set `apiKey` to any non-empty string (e.g. `"no-key"`).
+>
+> If your custom endpoint supports the OpenAI Responses API, opt in explicitly:
+>
+> ```json
+> {
+>   "providers": {
+>     "custom": {
+>       "apiKey": "your-api-key",
+>       "apiBase": "https://api.your-provider.com/v1",
+>       "apiMode": "responses",
+>       "promptCacheRetention": "24h"
+>     }
+>   },
+>   "agents": {
+>     "defaults": {
+>       "provider": "custom",
+>       "model": "your-model-name"
+>     }
+>   }
+> }
+> ```
+>
+> `custom` stays on Chat Completions by default. Use `apiMode: "responses"` only if your endpoint actually supports `/v1/responses`.
 
 </details>
 
