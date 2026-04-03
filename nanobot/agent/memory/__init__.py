@@ -59,10 +59,8 @@ _SAVE_SUPERMEMORY_SUMMARY_TOOL = [
                 "properties": {
                     "summary_entry": {
                         "type": "string",
-                        "description": "One concise extraction-oriented durable memory record for "
-                        "this exchange. Preserve exact literals like URLs, handles, IDs, repo "
-                        "names, commands, aliases, and short mappings. Do not return a full "
-                        "rewritten memory document.",
+                        "description": "One concise durable memory record for this exchange."
+                        " Do not return a full rewritten memory document.",
                     }
                 },
                 "required": ["summary_entry"],
@@ -82,8 +80,8 @@ _MEMORY_DECISION_TOOL = [
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["skip", "summary", "both"],
-                        "description": "Persistence action: skip, summary, or both.",
+                        "enum": ["skip", "consolidate", "both"],
+                        "description": "Persistence action: skip, consolidate, or both.",
                     },
                     "reason": {
                         "type": "string",
@@ -100,10 +98,10 @@ _MEMORY_DECISION_SYSTEM_PROMPT = """You are a durable-memory gate for an assista
 
 Call the memory_decision tool with exactly one action:
 - skip: do not persist this exchange
-- summary: persist only a concise durable summary memory
+- consolidate: persist only a durable summary memory
 - both: persist a durable summary and the full raw turn text
 
-Use summary as the default for durable but compressible information such as:
+Use consolidate for durable information such as:
 - stable user identity facts, aliases, handles, or preferences
 - lasting communication or behavior rules
 - recurring mappings or personalized instructions
@@ -111,11 +109,9 @@ Use summary as the default for durable but compressible information such as:
 - durable workflow facts that change how the assistant should operate in future runs
 - corrections to stale assumptions that would otherwise cause repeated mistakes
 - instruction or procedure updates that should influence future behavior
-- explicit user memory requests that can be preserved faithfully in a concise record
 
-Use both only when durable memory is needed and the exact wording or full source text is likely
-useful later, especially long-form content such as essays, specs, detailed notes, meeting
-writeups, dense reference material, or explicit memory requests containing exact text blocks.
+Use both when durable memory is needed and the exact wording/detail is likely useful later,
+especially long-form content such as essays, specs, detailed notes, and meeting writeups.
 
 Use skip for exchanges that are mainly:
 - one-off chatter or acknowledgements
@@ -124,14 +120,14 @@ Use skip for exchanges that are mainly:
 - low-value wording noise that does not affect future behavior
 
 Examples:
-- summary: "Use this repo naming rule for future PR titles."
+- consolidate: "Use this repo naming rule for future PR titles."
 - both: "Here is my 600-word essay on launch risks; remember this for later review."
 - skip: "I reran the command and got a timeout once."
 - skip: "Thanks"""
 
-MemoryDecisionAction = Literal["skip", "summary", "both"]
+MemoryDecisionAction = Literal["skip", "consolidate", "both"]
 _MEMORY_DECISION_DEFAULT_ACTION: MemoryDecisionAction = "skip"
-_MEMORY_DECISION_ACTIONS: tuple[MemoryDecisionAction, ...] = ("skip", "summary", "both")
+_MEMORY_DECISION_ACTIONS: tuple[MemoryDecisionAction, ...] = ("skip", "consolidate", "both")
 
 
 def _ensure_text(value: Any) -> str:
@@ -146,15 +142,6 @@ def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
     if isinstance(args, list):
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
-
-
-def _normalize_memory_action(action: str) -> MemoryDecisionAction | None:
-    normalized = action.strip().lower()
-    if normalized == "consolidate":
-        return "summary"
-    if normalized in _MEMORY_DECISION_ACTIONS:
-        return cast(MemoryDecisionAction, normalized)
-    return None
 
 
 _TOOL_CHOICE_ERROR_MARKERS = (
@@ -358,12 +345,8 @@ class MemoryStore:
         retrieved_context = self.get_memory_context() or "(empty)"
         prompt = f"""Process this conversation and call save_supermemory_summary.
 
-Write one concise durable memory record optimized for downstream extraction by Supermemory.
-Do not output a generic recap or a full rewritten long-term memory document.
-Keep only durable information likely to matter in future retrieval.
-Make explicit user memory requests visible in the text.
-Preserve exact values verbatim for URLs, handles, IDs, repo names, commands, aliases, and
-short mappings like "X = Y". Use short labeled lines when helpful.
+Write one concise durable memory record for future retrieval.
+Do not output a full rewritten long-term memory document.
 
 ## Existing Relevant Memory
 {retrieved_context}
@@ -374,9 +357,8 @@ short mappings like "X = Y". Use short labeled lines when helpful.
         chat_messages = [
             {
                 "role": "system",
-                "content": "You are a memory consolidation agent for Supermemory. Write one "
-                "extraction-oriented durable memory record per call, preserve exact literals, "
-                "and make explicit remember requests clear.",
+                "content": "You are a memory consolidation agent for Supermemory. "
+                "Write one durable summary record per call.",
             },
             {"role": "user", "content": prompt},
         ]
@@ -614,12 +596,9 @@ class MemoryConsolidator:
                 logger.warning("Memory decision: unexpected memory_decision arguments")
                 return _MEMORY_DECISION_DEFAULT_ACTION
 
-            raw_action = str(args.get("action", ""))
-            action = _normalize_memory_action(raw_action)
-            if action is None:
-                logger.warning(
-                    "Memory decision: invalid action '{}', defaulting to skip", raw_action
-                )
+            action = str(args.get("action", "")).strip().lower()
+            if action not in _MEMORY_DECISION_ACTIONS:
+                logger.warning("Memory decision: invalid action '{}', defaulting to skip", action)
                 return _MEMORY_DECISION_DEFAULT_ACTION
 
             logger.info(
@@ -642,7 +621,7 @@ class MemoryConsolidator:
         async with lock:
             if messages:
                 action = await self.decide_turn_memory_action(messages)
-                if action in {"summary", "both"}:
+                if action in {"consolidate", "both"}:
                     await self.remember_messages(messages)
                     if action == "both" and not await self.store.save_raw_turn(messages):
                         logger.warning(

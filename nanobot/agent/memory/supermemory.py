@@ -11,8 +11,6 @@ from loguru import logger
 
 from nanobot.config.schema import MemoryConfig
 
-_RETRIEVED_MEMORY_KINDS = ("summary_turn", "raw_turn")
-
 
 class SupermemoryMemoryBackend:
     """Stores memory in Supermemory and builds retrieved prompt context."""
@@ -40,9 +38,6 @@ class SupermemoryMemoryBackend:
         workspace_key = str(self.workspace.expanduser().resolve())
         digest = hashlib.sha1(workspace_key.encode("utf-8")).hexdigest()[:16]
         return f"nanobot-workspace-{digest}"
-
-    def _entity_context(self) -> str:
-        return self.config.supermemory.entity_context.strip()
 
     def _build_supermemory_client(self) -> Any | None:
         api_key = self.config.supermemory.api_key.strip()
@@ -162,9 +157,6 @@ class SupermemoryMemoryBackend:
                 "container_tag": tag,
                 "metadata": metadata,
             }
-            entity_context = self._entity_context()
-            if entity_context:
-                kwargs["entity_context"] = entity_context
             if custom_id:
                 kwargs["custom_id"] = custom_id
             return await self._await_if_needed(add_fn(**kwargs))
@@ -192,10 +184,8 @@ class SupermemoryMemoryBackend:
                     container_tag=tag,
                     filters={
                         "OR": [
-                            *[
-                                {"key": "kind", "value": kind, "negate": False}
-                                for kind in _RETRIEVED_MEMORY_KINDS
-                            ]
+                            {"key": "kind", "value": "summary_turn", "negate": False},
+                            {"key": "kind", "value": "raw_turn", "negate": False},
                         ]
                     },
                     limit=limit,
@@ -213,7 +203,10 @@ class SupermemoryMemoryBackend:
         lines: list[str] = []
         for idx, item in enumerate(matches, start=1):
             metadata = item.get("metadata")
-            if isinstance(metadata, dict) and metadata.get("kind") not in _RETRIEVED_MEMORY_KINDS:
+            if isinstance(metadata, dict) and metadata.get("kind") not in {
+                "summary_turn",
+                "raw_turn",
+            }:
                 continue
             text = self._extract_item_text(item)
             if not text:

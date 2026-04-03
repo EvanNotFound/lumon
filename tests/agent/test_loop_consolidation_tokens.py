@@ -255,7 +255,7 @@ async def test_process_direct_schedules_post_turn_memory_in_background(tmp_path)
         scheduled.append((coro, label))
 
     loop._schedule_background = capture_background  # type: ignore[method-assign]
-    loop.memory_consolidator.decide_turn_memory_action = AsyncMock(return_value="summary")  # type: ignore[method-assign]
+    loop.memory_consolidator.decide_turn_memory_action = AsyncMock(return_value="consolidate")  # type: ignore[method-assign]
 
     response = await loop.process_direct("my online handle is evannotfound", session_key="cli:test")
 
@@ -275,7 +275,7 @@ async def test_process_post_turn_memory_orders_judge_remember_then_consolidate(t
 
     async def track_decide(_messages) -> str:
         order.append("judge")
-        return "summary"
+        return "consolidate"
 
     async def track_remember(_messages) -> bool:
         order.append("remember")
@@ -351,7 +351,7 @@ async def test_model_memory_decision_returns_action_from_tool_call(tmp_path) -> 
                 ToolCallRequest(
                     id="call_1",
                     name="memory_decision",
-                    arguments={"action": "summary", "reason": "durable user identity fact"},
+                    arguments={"action": "consolidate", "reason": "durable user identity fact"},
                 )
             ],
         )
@@ -364,39 +364,7 @@ async def test_model_memory_decision_returns_action_from_tool_call(tmp_path) -> 
         ]
     )
 
-    assert result == "summary"
-
-    messages = loop.provider.chat_with_retry.await_args.kwargs["messages"]
-    assert (
-        "summary as the default for durable but compressible information" in messages[0]["content"]
-    )
-    assert "explicit user memory requests" in messages[0]["content"]
-
-
-@pytest.mark.asyncio
-async def test_model_memory_decision_normalizes_legacy_consolidate_to_summary(tmp_path) -> None:
-    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=200)
-    loop.provider.chat_with_retry = AsyncMock(
-        return_value=LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="memory_decision",
-                    arguments={"action": "consolidate", "reason": "legacy action name"},
-                )
-            ],
-        )
-    )
-
-    result = await loop.memory_consolidator.decide_turn_memory_action(
-        [
-            {"role": "user", "content": "remember the link is https://example.com"},
-            {"role": "assistant", "content": "I'll remember that."},
-        ]
-    )
-
-    assert result == "summary"
+    assert result == "consolidate"
 
 
 @pytest.mark.asyncio
