@@ -113,6 +113,7 @@ class SupermemoryConfig(Base):
     api_key: str = ""
     base_url: str = "https://api.supermemory.ai"
     container_tag: str = ""
+    entity_context: str = ""
     timeout_s: int = 10
 
 

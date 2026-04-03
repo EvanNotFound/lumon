@@ -55,6 +55,14 @@ async def test_supermemory_backend_persists_summary_only(tmp_path: Path) -> None
     call = store._backend._supermemory_add_memory.await_args  # type: ignore[attr-defined]
     assert call.kwargs.get("custom_id") is None
     assert call.kwargs["metadata"]["kind"] == "summary_turn"
+    assert (
+        "Preserve exact values verbatim"
+        in provider.chat_with_retry.await_args.kwargs["messages"][1]["content"]
+    )
+    assert (
+        "explicit user memory requests"
+        in provider.chat_with_retry.await_args.kwargs["messages"][1]["content"]
+    )
 
     with pytest.raises(RuntimeError):
         _ = store.memory_file
@@ -85,3 +93,32 @@ async def test_supermemory_backend_persists_raw_turn_document(tmp_path: Path) ->
     call = store._backend._supermemory_add_memory.await_args  # type: ignore[attr-defined]
     assert call.kwargs["metadata"]["kind"] == "raw_turn"
     assert "[TURN] 2 messages" in call.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_supermemory_backend_includes_entity_context_when_configured(tmp_path: Path) -> None:
+    config = MemoryConfig(
+        backend="supermemory",
+        supermemory=SupermemoryConfig(
+            api_key="sm_test_key",
+            container_tag="workspace-test",
+            entity_context="Remember durable assistant instructions and exact links.",
+        ),
+    )
+    store = MemoryStore(tmp_path, memory_config=config)
+
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        async def add(self, **kwargs):
+            captured.update(kwargs)
+            return {"id": "summary_1", "status": "queued"}
+
+    store._backend._build_supermemory_client = lambda: _FakeClient()  # type: ignore[attr-defined]
+
+    result = await store.save_supermemory_summary(
+        "[2026-01-01 10:00] Memory: Link = https://example.com"
+    )
+
+    assert result is True
+    assert captured["entity_context"] == "Remember durable assistant instructions and exact links."

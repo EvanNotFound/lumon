@@ -17,6 +17,7 @@ def test_memory_backend_accepts_supermemory_values() -> None:
                     "apiKey": "sm_test_key",
                     "baseUrl": "https://api.supermemory.ai",
                     "containerTag": "workspace-prod",
+                    "entityContext": "Remember durable user preferences and exact links.",
                     "timeoutS": 25,
                 },
             }
@@ -26,4 +27,8 @@ def test_memory_backend_accepts_supermemory_values() -> None:
     assert config.memory.backend == "supermemory"
     assert config.memory.supermemory.api_key == "sm_test_key"
     assert config.memory.supermemory.container_tag == "workspace-prod"
+    assert (
+        config.memory.supermemory.entity_context
+        == "Remember durable user preferences and exact links."
+    )
     assert config.memory.supermemory.timeout_s == 25
