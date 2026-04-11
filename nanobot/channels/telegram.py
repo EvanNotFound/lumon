@@ -11,9 +11,23 @@ from typing import Any, Literal
 
 from loguru import logger
 from pydantic import Field
-from telegram import BotCommand, ReactionTypeEmoji, ReplyParameters, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeEmoji,
+    ReplyParameters,
+    Update,
+)
 from telegram.error import TimedOut
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
 from nanobot.bus.events import OutboundMessage
@@ -29,6 +43,7 @@ TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 TELEGRAM_REPLY_CONTEXT_MAX_LEN = (
     TELEGRAM_MAX_MESSAGE_LEN  # Max length for reply context in user message
 )
+_THINKING_CALLBACK_PREFIX = "thk:"
 
 
 def _strip_md(s: str) -> str:
@@ -291,6 +306,11 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("thinking", self._forward_command))
         self._app.add_handler(CommandHandler("mcp", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._on_help))
+        self._app.add_handler(
+            CallbackQueryHandler(
+                self._on_thinking_callback, pattern=rf"^{_THINKING_CALLBACK_PREFIX}"
+            )
+        )
 
         # Add message handler for text, photos, voice, documents
         self._app.add_handler(
@@ -393,6 +413,7 @@ class TelegramChannel(BaseChannel):
         thread_kwargs = {}
         if message_thread_id is not None:
             thread_kwargs["message_thread_id"] = message_thread_id
+        reply_markup = self._build_reply_markup(msg.metadata)
 
         reply_params = None
         if self.config.reply_to_message:
@@ -400,6 +421,17 @@ class TelegramChannel(BaseChannel):
                 reply_params = ReplyParameters(
                     message_id=reply_to_message_id, allow_sending_without_reply=True
                 )
+
+        edit_message_id = msg.metadata.get("_telegram_edit_message_id")
+        if edit_message_id is not None:
+            if msg.content and msg.content != "[empty message]":
+                await self._edit_text(
+                    chat_id,
+                    int(edit_message_id),
+                    msg.content,
+                    reply_markup=reply_markup,
+                )
+            return
 
         # Send media files
         for media_path in msg.media or []:
@@ -451,8 +483,57 @@ class TelegramChannel(BaseChannel):
 
         # Send text content
         if msg.content and msg.content != "[empty message]":
-            for chunk in split_message(msg.content, TELEGRAM_MAX_MESSAGE_LEN):
-                await self._send_text(chat_id, chunk, reply_params, thread_kwargs)
+            if reply_markup is not None:
+                await self._send_text(
+                    chat_id,
+                    msg.content,
+                    reply_params,
+                    thread_kwargs,
+                    reply_markup=reply_markup,
+                )
+            else:
+                for chunk in split_message(msg.content, TELEGRAM_MAX_MESSAGE_LEN):
+                    await self._send_text(chat_id, chunk, reply_params, thread_kwargs)
+
+    @staticmethod
+    def _thinking_callback_data(action: str) -> str:
+        """Build compact callback data for thinking-picker actions."""
+        return f"{_THINKING_CALLBACK_PREFIX}{action}"
+
+    @staticmethod
+    def _parse_thinking_callback(data: str | None) -> str | None:
+        """Parse thinking-picker callback data into a requested action."""
+        if not isinstance(data, str) or not data.startswith(_THINKING_CALLBACK_PREFIX):
+            return None
+        action = data[len(_THINKING_CALLBACK_PREFIX) :].strip().lower()
+        return action if action in {"low", "medium", "high", "off"} else None
+
+    def _build_reply_markup(self, metadata: dict[str, Any] | None) -> InlineKeyboardMarkup | None:
+        """Build channel-specific reply markup from outbound metadata."""
+        payload = (metadata or {}).get("_telegram_inline_keyboard")
+        if not isinstance(payload, dict) or payload.get("type") != "thinking_picker":
+            return None
+
+        current = str(payload.get("level") or "off").lower()
+        actions = payload.get("actions") or ["low", "medium", "high", "off"]
+        keyboard = []
+        row = []
+        for action in actions:
+            if not isinstance(action, str):
+                continue
+            label = f"✅ {action}" if action == current else action
+            row.append(
+                InlineKeyboardButton(
+                    label.title() if not label.startswith("✅") else f"✅ {action.title()}",
+                    callback_data=self._thinking_callback_data(action),
+                )
+            )
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        return InlineKeyboardMarkup(keyboard) if keyboard else None
 
     async def _call_with_retry(self, fn, *args, **kwargs):
         """Call an async Telegram API function with retry on pool/network timeout."""
@@ -478,6 +559,7 @@ class TelegramChannel(BaseChannel):
         reply_params=None,
         thread_kwargs: dict | None = None,
         disable_notification: bool = False,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
         """Send a plain text message with HTML fallback."""
         try:
@@ -489,6 +571,7 @@ class TelegramChannel(BaseChannel):
                 parse_mode="HTML",
                 reply_parameters=reply_params,
                 disable_notification=disable_notification,
+                reply_markup=reply_markup,
                 **(thread_kwargs or {}),
             )
         except Exception as e:
@@ -500,11 +583,41 @@ class TelegramChannel(BaseChannel):
                     text=text,
                     reply_parameters=reply_params,
                     disable_notification=disable_notification,
+                    reply_markup=reply_markup,
                     **(thread_kwargs or {}),
                 )
             except Exception as e2:
                 logger.error("Error sending Telegram message: {}", e2)
                 raise
+
+    async def _edit_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
+        """Edit an existing Telegram message with HTML fallback."""
+        try:
+            html = _markdown_to_telegram_html(text)
+            await self._call_with_retry(
+                self._app.bot.edit_message_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=html,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        except Exception as e:
+            logger.warning("Telegram edit HTML parse failed, falling back to plain text: {}", e)
+            await self._call_with_retry(
+                self._app.bot.edit_message_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
 
     async def send_delta(
         self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None
@@ -777,6 +890,45 @@ class TelegramChannel(BaseChannel):
             chat_id=str(message.chat_id),
             content=message.text or "",
             metadata=self._build_message_metadata(message, user),
+            session_key=self._derive_topic_session_key(message),
+        )
+
+    async def _on_thinking_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle Telegram callback queries for thinking-picker buttons."""
+        query = update.callback_query
+        if query is None:
+            return
+
+        action = self._parse_thinking_callback(query.data)
+        if action is None:
+            await query.answer("Unsupported thinking action.", show_alert=True)
+            return
+
+        message = query.message
+        user = query.from_user
+        if message is None or user is None:
+            await query.answer(
+                "This thinking picker is no longer available. Send /thinking again.",
+                show_alert=True,
+            )
+            return
+
+        sender_id = self._sender_id(user)
+        if not self.is_allowed(sender_id):
+            await query.answer("You are not allowed to use this bot.", show_alert=True)
+            return
+
+        await query.answer()
+        self._remember_thread_context(message)
+        metadata = self._build_message_metadata(message, user)
+        metadata["_telegram_thinking_edit_message_id"] = message.message_id
+        await self._handle_message(
+            sender_id=sender_id,
+            chat_id=str(message.chat_id),
+            content=f"/thinking {action}",
+            metadata=metadata,
             session_key=self._derive_topic_session_key(message),
         )
 

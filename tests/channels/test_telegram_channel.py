@@ -44,6 +44,7 @@ class _FakeUpdater:
 class _FakeBot:
     def __init__(self) -> None:
         self.sent_messages: list[dict] = []
+        self.edited_messages: list[dict] = []
         self.sent_media: list[dict] = []
         self.get_me_calls = 0
 
@@ -56,6 +57,10 @@ class _FakeBot:
 
     async def send_message(self, **kwargs) -> None:
         self.sent_messages.append(kwargs)
+        return SimpleNamespace(message_id=len(self.sent_messages))
+
+    async def edit_message_text(self, **kwargs) -> None:
+        self.edited_messages.append(kwargs)
 
     async def send_photo(self, **kwargs) -> None:
         self.sent_media.append({"kind": "photo", **kwargs})
@@ -157,6 +162,24 @@ def _make_telegram_update(
         message_id=1,
     )
     return SimpleNamespace(message=message, effective_user=user)
+
+
+def _make_callback_update(*, data: str, chat_type: str = "private", message_thread_id=None):
+    user = SimpleNamespace(id=12345, username="alice", first_name="Alice")
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type=chat_type, is_forum=message_thread_id is not None),
+        chat_id=-100123 if chat_type != "private" else 123,
+        message_id=77,
+        message_thread_id=message_thread_id,
+        reply_to_message=None,
+    )
+    query = SimpleNamespace(
+        data=data,
+        message=message,
+        from_user=user,
+        answer=AsyncMock(),
+    )
+    return SimpleNamespace(callback_query=query, effective_user=user, message=None)
 
 
 @pytest.mark.asyncio
@@ -380,6 +403,124 @@ async def test_send_reply_infers_topic_from_message_id_cache() -> None:
 
     assert channel._app.bot.sent_messages[0]["message_thread_id"] == 42
     assert channel._app.bot.sent_messages[0]["reply_parameters"].message_id == 10
+
+
+@pytest.mark.asyncio
+async def test_send_builds_thinking_picker_reply_markup() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="Thinking level for this chat: medium\nSource: default\nChoose a level below.",
+            metadata={
+                "_telegram_inline_keyboard": {
+                    "type": "thinking_picker",
+                    "level": "medium",
+                    "source": "default",
+                    "actions": ["low", "medium", "high", "off"],
+                }
+            },
+        )
+    )
+
+    sent = channel._app.bot.sent_messages[0]
+    assert sent["reply_markup"].inline_keyboard[0][0].callback_data == "thk:low"
+    assert sent["reply_markup"].inline_keyboard[0][1].text == "✅ Medium"
+
+
+@pytest.mark.asyncio
+async def test_send_edits_existing_thinking_picker_message() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="Thinking level for this chat: high\nSource: chat override\nChoose a level below.",
+            metadata={
+                "_telegram_edit_message_id": 77,
+                "_telegram_inline_keyboard": {
+                    "type": "thinking_picker",
+                    "level": "high",
+                    "source": "chat override",
+                    "actions": ["low", "medium", "high", "off"],
+                },
+            },
+        )
+    )
+
+    edited = channel._app.bot.edited_messages[0]
+    assert edited["message_id"] == 77
+    assert edited["reply_markup"].inline_keyboard[1][0].text == "✅ High"
+
+
+@pytest.mark.asyncio
+async def test_on_thinking_callback_answers_and_forwards_hidden_command() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    handled = []
+
+    async def capture_handle(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = capture_handle
+    update = _make_callback_update(data="thk:high", chat_type="private")
+
+    await channel._on_thinking_callback(update, None)
+
+    update.callback_query.answer.assert_awaited_once_with()
+    assert handled[0]["content"] == "/thinking high"
+    assert handled[0]["metadata"]["_telegram_thinking_edit_message_id"] == 77
+
+
+@pytest.mark.asyncio
+async def test_on_thinking_callback_rejects_invalid_data() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._handle_message = AsyncMock()
+    update = _make_callback_update(data="thk:unknown", chat_type="private")
+
+    await channel._on_thinking_callback(update, None)
+
+    update.callback_query.answer.assert_awaited_once_with(
+        "Unsupported thinking action.", show_alert=True
+    )
+    channel._handle_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_thinking_callback_handles_stale_message() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    channel._handle_message = AsyncMock()
+    update = _make_callback_update(data="thk:off", chat_type="private")
+    update.callback_query.message = None
+
+    await channel._on_thinking_callback(update, None)
+
+    update.callback_query.answer.assert_awaited_once_with(
+        "This thinking picker is no longer available. Send /thinking again.", show_alert=True
+    )
+    channel._handle_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

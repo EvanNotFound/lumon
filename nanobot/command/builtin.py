@@ -20,6 +20,7 @@ from nanobot.utils.helpers import build_status_content
 # Pattern to match $skill-name tokens (word chars + hyphens)
 _SKILL_REF = re.compile(r"\$([A-Za-z][A-Za-z0-9_-]*)")
 _THINKING_LEVELS = ("low", "medium", "high")
+_THINKING_PICKER_ACTIONS = (*_THINKING_LEVELS, "off")
 
 
 def _get_session_and_default_reasoning(ctx: CommandContext):
@@ -40,6 +41,23 @@ def _build_thinking_usage() -> str:
 def _build_thinking_status_message(level: str, source: str) -> str:
     """Build a human-readable status line for chat thinking level."""
     return f"Thinking level for this chat: {level}\nSource: {source}"
+
+
+def _build_thinking_picker_text(level: str, source: str) -> str:
+    """Build Telegram-friendly picker text for interactive thinking selection."""
+    return f"{_build_thinking_status_message(level, source)}\nChoose a level below."
+
+
+def _build_thinking_picker_metadata(level: str, source: str) -> dict[str, object]:
+    """Build Telegram-specific picker metadata from shared thinking state."""
+    return {
+        "_telegram_inline_keyboard": {
+            "type": "thinking_picker",
+            "level": level,
+            "source": source,
+            "actions": list(_THINKING_PICKER_ACTIONS),
+        }
+    }
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
@@ -174,25 +192,36 @@ async def cmd_thinking(ctx: CommandContext) -> OutboundMessage:
 
     if not arg:
         level, source = describe_session_reasoning_effort(session, default_effort)
+        metadata = {"render_as": "text"}
+        content = f"{_build_thinking_status_message(level, source)}\n{_build_thinking_usage()}"
+        if ctx.msg.channel == "telegram":
+            metadata.update(_build_thinking_picker_metadata(level, source))
+            content = _build_thinking_picker_text(level, source)
         return OutboundMessage(
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
-            content=f"{_build_thinking_status_message(level, source)}\n{_build_thinking_usage()}",
-            metadata={"render_as": "text"},
+            content=content,
+            metadata=metadata,
         )
 
     if arg == "off":
         clear_session_reasoning_effort_override(session)
         loop.sessions.save(session)
         level, source = describe_session_reasoning_effort(session, default_effort)
+        metadata: dict[str, object] = {"render_as": "text"}
+        content = (
+            "Thinking override cleared for this chat.\n"
+            f"{_build_thinking_status_message(level, source)}"
+        )
+        if edit_message_id := ctx.msg.metadata.get("_telegram_thinking_edit_message_id"):
+            metadata["_telegram_edit_message_id"] = edit_message_id
+            metadata.update(_build_thinking_picker_metadata(level, source))
+            content = _build_thinking_picker_text(level, source)
         return OutboundMessage(
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
-            content=(
-                "Thinking override cleared for this chat.\n"
-                f"{_build_thinking_status_message(level, source)}"
-            ),
-            metadata={"render_as": "text"},
+            content=content,
+            metadata=metadata,
         )
 
     try:
@@ -210,11 +239,17 @@ async def cmd_thinking(ctx: CommandContext) -> OutboundMessage:
         )
 
     loop.sessions.save(session)
+    metadata: dict[str, object] = {"render_as": "text"}
+    content = f"Thinking level set for this chat.\n{_build_thinking_status_message(level, 'chat override')}"
+    if edit_message_id := ctx.msg.metadata.get("_telegram_thinking_edit_message_id"):
+        metadata["_telegram_edit_message_id"] = edit_message_id
+        metadata.update(_build_thinking_picker_metadata(level, "chat override"))
+        content = _build_thinking_picker_text(level, "chat override")
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
-        content=f"Thinking level set for this chat.\n{_build_thinking_status_message(level, 'chat override')}",
-        metadata={"render_as": "text"},
+        content=content,
+        metadata=metadata,
     )
 
 

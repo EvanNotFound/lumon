@@ -60,6 +60,49 @@ class TestThinkingCommand:
         assert response is not None
         assert "Thinking level for this chat: medium" in response.content
         assert "Source: default" in response.content
+        assert "_telegram_inline_keyboard" not in response.metadata
+
+    @pytest.mark.asyncio
+    async def test_telegram_no_arg_emits_picker_metadata(self):
+        loop, _bus, provider = _make_loop()
+        provider.generation = GenerationSettings(reasoning_effort="medium")
+        session = Session(key="telegram:123")
+        loop.sessions.get_or_create.return_value = session
+
+        response = await loop._process_message(
+            InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="/thinking")
+        )
+
+        assert response is not None
+        assert "Choose a level below." in response.content
+        assert response.metadata["_telegram_inline_keyboard"] == {
+            "type": "thinking_picker",
+            "level": "medium",
+            "source": "default",
+            "actions": ["low", "medium", "high", "off"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_callback_origin_returns_edit_metadata_and_picker_state(self):
+        loop, _bus, _provider = _make_loop()
+        session = Session(key="telegram:123")
+        loop.sessions.get_or_create.return_value = session
+
+        response = await loop._process_message(
+            InboundMessage(
+                channel="telegram",
+                sender_id="user",
+                chat_id="123",
+                content="/thinking high",
+                metadata={"_telegram_thinking_edit_message_id": 77},
+            )
+        )
+
+        assert response is not None
+        assert session.metadata["reasoning_effort"] == "high"
+        assert response.metadata["_telegram_edit_message_id"] == 77
+        assert response.metadata["_telegram_inline_keyboard"]["level"] == "high"
+        assert "Choose a level below." in response.content
 
     @pytest.mark.asyncio
     async def test_set_and_clear_override(self):
