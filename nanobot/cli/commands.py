@@ -612,6 +612,7 @@ def gateway(
         """Execute a cron job through the agent."""
         from nanobot.agent.tools.cron import CronTool
         from nanobot.agent.tools.message import MessageTool
+        from nanobot.cron.service import apply_cron_history_profile
         from nanobot.utils.evaluator import evaluate_response
 
         reminder_note = (
@@ -619,6 +620,9 @@ def gateway(
             f"Task '{job.name}' has been triggered.\n"
             f"Scheduled instruction: {job.payload.message}"
         )
+        session = session_manager.get_or_create(f"cron:{job.id}")
+        apply_cron_history_profile(session, job.profile)
+        session_manager.save(session)
 
         cron_tool = agent.tools.get("cron")
         cron_token = None

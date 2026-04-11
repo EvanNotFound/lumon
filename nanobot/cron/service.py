@@ -10,7 +10,20 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
-from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronRunRecord, CronSchedule, CronStore
+from nanobot.cron.types import (
+    DEFAULT_CRON_HISTORY_PROFILE,
+    LEGACY_CRON_HISTORY_PROFILE,
+    CronHistoryProfile,
+    CronJob,
+    CronJobState,
+    CronPayload,
+    CronRunRecord,
+    CronSchedule,
+    CronStore,
+    cron_history_profile_max_messages,
+    normalize_cron_history_profile,
+)
+from nanobot.session.manager import Session
 
 
 def _now_ms() -> int:
@@ -33,6 +46,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
             from zoneinfo import ZoneInfo
 
             from croniter import croniter
+
             # Use caller-provided reference time for deterministic scheduling
             base_time = now_ms / 1000
             tz = ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo
@@ -58,6 +72,15 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
             ZoneInfo(schedule.tz)
         except Exception:
             raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+
+
+def apply_cron_history_profile(session: Session, profile: CronHistoryProfile) -> None:
+    """Apply one cron history profile to a session before execution."""
+    max_messages = cron_history_profile_max_messages(profile)
+    if max_messages <= 0:
+        session.clear()
+        return
+    session.retain_recent_legal_suffix(max_messages)
 
 
 class CronService:
@@ -92,43 +115,49 @@ class CronService:
                 data = json.loads(self.store_path.read_text(encoding="utf-8"))
                 jobs = []
                 for j in data.get("jobs", []):
-                    jobs.append(CronJob(
-                        id=j["id"],
-                        name=j["name"],
-                        enabled=j.get("enabled", True),
-                        schedule=CronSchedule(
-                            kind=j["schedule"]["kind"],
-                            at_ms=j["schedule"].get("atMs"),
-                            every_ms=j["schedule"].get("everyMs"),
-                            expr=j["schedule"].get("expr"),
-                            tz=j["schedule"].get("tz"),
-                        ),
-                        payload=CronPayload(
-                            kind=j["payload"].get("kind", "agent_turn"),
-                            message=j["payload"].get("message", ""),
-                            deliver=j["payload"].get("deliver", False),
-                            channel=j["payload"].get("channel"),
-                            to=j["payload"].get("to"),
-                        ),
-                        state=CronJobState(
-                            next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
-                            last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
-                            last_status=j.get("state", {}).get("lastStatus"),
-                            last_error=j.get("state", {}).get("lastError"),
-                            run_history=[
-                                CronRunRecord(
-                                    run_at_ms=r["runAtMs"],
-                                    status=r["status"],
-                                    duration_ms=r.get("durationMs", 0),
-                                    error=r.get("error"),
-                                )
-                                for r in j.get("state", {}).get("runHistory", [])
-                            ],
-                        ),
-                        created_at_ms=j.get("createdAtMs", 0),
-                        updated_at_ms=j.get("updatedAtMs", 0),
-                        delete_after_run=j.get("deleteAfterRun", False),
-                    ))
+                    jobs.append(
+                        CronJob(
+                            id=j["id"],
+                            name=j["name"],
+                            enabled=j.get("enabled", True),
+                            profile=normalize_cron_history_profile(
+                                j.get("profile"),
+                                fallback=LEGACY_CRON_HISTORY_PROFILE,
+                            ),
+                            schedule=CronSchedule(
+                                kind=j["schedule"]["kind"],
+                                at_ms=j["schedule"].get("atMs"),
+                                every_ms=j["schedule"].get("everyMs"),
+                                expr=j["schedule"].get("expr"),
+                                tz=j["schedule"].get("tz"),
+                            ),
+                            payload=CronPayload(
+                                kind=j["payload"].get("kind", "agent_turn"),
+                                message=j["payload"].get("message", ""),
+                                deliver=j["payload"].get("deliver", False),
+                                channel=j["payload"].get("channel"),
+                                to=j["payload"].get("to"),
+                            ),
+                            state=CronJobState(
+                                next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
+                                last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
+                                last_status=j.get("state", {}).get("lastStatus"),
+                                last_error=j.get("state", {}).get("lastError"),
+                                run_history=[
+                                    CronRunRecord(
+                                        run_at_ms=r["runAtMs"],
+                                        status=r["status"],
+                                        duration_ms=r.get("durationMs", 0),
+                                        error=r.get("error"),
+                                    )
+                                    for r in j.get("state", {}).get("runHistory", [])
+                                ],
+                            ),
+                            created_at_ms=j.get("createdAtMs", 0),
+                            updated_at_ms=j.get("updatedAtMs", 0),
+                            delete_after_run=j.get("deleteAfterRun", False),
+                        )
+                    )
                 self._store = CronStore(jobs=jobs)
             except Exception as e:
                 logger.warning("Failed to load cron store: {}", e)
@@ -152,6 +181,7 @@ class CronService:
                     "id": j.id,
                     "name": j.name,
                     "enabled": j.enabled,
+                    "profile": j.profile,
                     "schedule": {
                         "kind": j.schedule.kind,
                         "atMs": j.schedule.at_ms,
@@ -186,12 +216,12 @@ class CronService:
                     "deleteAfterRun": j.delete_after_run,
                 }
                 for j in self._store.jobs
-            ]
+            ],
         }
 
         self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._last_mtime = self.store_path.stat().st_mtime
-    
+
     async def start(self) -> None:
         """Start the cron service."""
         self._running = True
@@ -199,7 +229,9 @@ class CronService:
         self._recompute_next_runs()
         self._save_store()
         self._arm_timer()
-        logger.info("Cron service started with {} jobs", len(self._store.jobs if self._store else []))
+        logger.info(
+            "Cron service started with {} jobs", len(self._store.jobs if self._store else [])
+        )
 
     def stop(self) -> None:
         """Stop the cron service."""
@@ -221,8 +253,9 @@ class CronService:
         """Get the earliest next run time across all jobs."""
         if not self._store:
             return None
-        times = [j.state.next_run_at_ms for j in self._store.jobs
-                 if j.enabled and j.state.next_run_at_ms]
+        times = [
+            j.state.next_run_at_ms for j in self._store.jobs if j.enabled and j.state.next_run_at_ms
+        ]
         return min(times) if times else None
 
     def _arm_timer(self) -> None:
@@ -252,7 +285,8 @@ class CronService:
 
         now = _now_ms()
         due_jobs = [
-            j for j in self._store.jobs
+            j
+            for j in self._store.jobs
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
         ]
 
@@ -284,13 +318,15 @@ class CronService:
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = end_ms
 
-        job.state.run_history.append(CronRunRecord(
-            run_at_ms=start_ms,
-            status=job.state.last_status,
-            duration_ms=end_ms - start_ms,
-            error=job.state.last_error,
-        ))
-        job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
+        job.state.run_history.append(
+            CronRunRecord(
+                run_at_ms=start_ms,
+                status=job.state.last_status,
+                duration_ms=end_ms - start_ms,
+                error=job.state.last_error,
+            )
+        )
+        job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY :]
 
         # Handle one-shot jobs
         if job.schedule.kind == "at":
@@ -309,13 +345,14 @@ class CronService:
         """List all jobs."""
         store = self._load_store()
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
-        return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
+        return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float("inf"))
 
     def add_job(
         self,
         name: str,
         schedule: CronSchedule,
         message: str,
+        profile: CronHistoryProfile = DEFAULT_CRON_HISTORY_PROFILE,
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
@@ -330,6 +367,10 @@ class CronService:
             id=str(uuid.uuid4())[:8],
             name=name,
             enabled=True,
+            profile=normalize_cron_history_profile(
+                profile,
+                fallback=DEFAULT_CRON_HISTORY_PROFILE,
+            ),
             schedule=schedule,
             payload=CronPayload(
                 kind="agent_turn",

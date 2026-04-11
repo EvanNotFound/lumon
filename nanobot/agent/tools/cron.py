@@ -6,7 +6,13 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJobState, CronSchedule
+from nanobot.cron.types import (
+    DEFAULT_CRON_HISTORY_PROFILE,
+    CronHistoryProfile,
+    CronJobState,
+    CronSchedule,
+    normalize_cron_history_profile,
+)
 
 
 class CronTool(Tool):
@@ -37,7 +43,10 @@ class CronTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove."
+        return (
+            "Schedule reminders and recurring tasks. Actions: add, list, remove. "
+            "Profiles: stateless, compact, normal."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -66,6 +75,11 @@ class CronTool(Tool):
                     "type": "string",
                     "description": "ISO datetime for one-time execution (e.g. '2026-02-12T10:30:00')",
                 },
+                "profile": {
+                    "type": "string",
+                    "enum": ["stateless", "compact", "normal"],
+                    "description": "History retention profile for recurring runs",
+                },
                 "job_id": {"type": "string", "description": "Job ID (for remove)"},
             },
             "required": ["action"],
@@ -79,13 +93,14 @@ class CronTool(Tool):
         cron_expr: str | None = None,
         tz: str | None = None,
         at: str | None = None,
+        profile: str | None = None,
         job_id: str | None = None,
         **kwargs: Any,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
-            return self._add_job(message, every_seconds, cron_expr, tz, at)
+            return self._add_job(message, every_seconds, cron_expr, tz, at, profile)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
@@ -99,6 +114,7 @@ class CronTool(Tool):
         cron_expr: str | None,
         tz: str | None,
         at: str | None,
+        profile: str | None,
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -135,16 +151,33 @@ class CronTool(Tool):
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
 
+        effective_profile = self._parse_profile(profile)
+        if effective_profile is None:
+            return "Error: unknown profile. Use stateless, compact, or normal"
+
         job = self._cron.add_job(
             name=message[:30],
             schedule=schedule,
             message=message,
+            profile=effective_profile,
             deliver=True,
             channel=self._channel,
             to=self._chat_id,
             delete_after_run=delete_after,
         )
-        return f"Created job '{job.name}' (id: {job.id})"
+        return f"Created job '{job.name}' (id: {job.id}, profile: {job.profile})"
+
+    @staticmethod
+    def _parse_profile(profile: str | None) -> CronHistoryProfile | None:
+        """Parse an optional cron profile string."""
+        raw = (profile or "").strip()
+        normalized = normalize_cron_history_profile(
+            raw,
+            fallback=DEFAULT_CRON_HISTORY_PROFILE,
+        )
+        if raw and raw.lower() != normalized:
+            return None
+        return normalized
 
     @staticmethod
     def _format_timing(schedule: CronSchedule) -> str:
@@ -189,6 +222,7 @@ class CronTool(Tool):
         for j in jobs:
             timing = self._format_timing(j.schedule)
             parts = [f"- {j.name} (id: {j.id}, {timing})"]
+            parts.append(f"  Profile: {j.profile}")
             parts.extend(self._format_state(j.state))
             lines.append("\n".join(parts))
         return "Scheduled jobs:\n" + "\n".join(lines)

@@ -3,8 +3,47 @@ import json
 
 import pytest
 
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from nanobot.cron.service import CronService, apply_cron_history_profile
+from nanobot.cron.types import CronSchedule, cron_history_profile_max_messages
+from nanobot.session.manager import Session
+
+
+def _tool_turn(prefix: str, idx: int) -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"{prefix}_{idx}_a",
+                    "type": "function",
+                    "function": {"name": "x", "arguments": "{}"},
+                },
+                {
+                    "id": f"{prefix}_{idx}_b",
+                    "type": "function",
+                    "function": {"name": "y", "arguments": "{}"},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": f"{prefix}_{idx}_a", "name": "x", "content": "ok"},
+        {"role": "tool", "tool_call_id": f"{prefix}_{idx}_b", "name": "y", "content": "ok"},
+    ]
+
+
+def _assert_no_orphans(history: list[dict]) -> None:
+    declared = {
+        tc["id"]
+        for message in history
+        if message.get("role") == "assistant"
+        for tc in (message.get("tool_calls") or [])
+    }
+    orphan_ids = [
+        message.get("tool_call_id")
+        for message in history
+        if message.get("role") == "tool" and message.get("tool_call_id") not in declared
+    ]
+    assert orphan_ids == []
 
 
 def test_add_job_rejects_unknown_timezone(tmp_path) -> None:
@@ -31,6 +70,100 @@ def test_add_job_accepts_valid_timezone(tmp_path) -> None:
 
     assert job.schedule.tz == "America/Vancouver"
     assert job.state.next_run_at_ms is not None
+    assert job.profile == "compact"
+
+
+def test_add_job_persists_default_compact_profile(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+
+    job = service.add_job(
+        name="profile default",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+    )
+
+    assert job.profile == "compact"
+
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    assert raw["jobs"][0]["profile"] == "compact"
+
+
+def test_load_store_treats_missing_profile_as_legacy_normal(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+
+    job = service.add_job(
+        name="legacy profile",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+    )
+
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    raw["jobs"][0].pop("profile", None)
+    store_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    fresh = CronService(store_path)
+    loaded = fresh.get_job(job.id)
+
+    assert loaded is not None
+    assert loaded.profile == "normal"
+
+
+def test_apply_cron_history_profile_stateless_clears_session() -> None:
+    session = Session(key="cron:test")
+    for idx in range(5):
+        session.messages.append({"role": "user", "content": f"msg{idx}"})
+    session.last_consolidated = 2
+
+    apply_cron_history_profile(session, "stateless")
+
+    assert session.messages == []
+    assert session.last_consolidated == 0
+
+
+def test_apply_cron_history_profile_compact_keeps_recent_suffix() -> None:
+    session = Session(key="cron:test")
+    max_messages = cron_history_profile_max_messages("compact")
+    for idx in range(max_messages + 6):
+        session.messages.append({"role": "user", "content": f"msg{idx}"})
+
+    apply_cron_history_profile(session, "compact")
+
+    assert len(session.messages) == max_messages
+    assert session.messages[0]["content"] == f"msg{6}"
+    assert session.messages[-1]["content"] == f"msg{max_messages + 5}"
+
+
+def test_apply_cron_history_profile_normal_keeps_larger_suffix() -> None:
+    session = Session(key="cron:test")
+    max_messages = cron_history_profile_max_messages("normal")
+    for idx in range(max_messages + 10):
+        session.messages.append({"role": "user", "content": f"msg{idx}"})
+
+    apply_cron_history_profile(session, "normal")
+
+    assert len(session.messages) == max_messages
+    assert session.messages[0]["content"] == "msg10"
+    assert session.messages[-1]["content"] == f"msg{max_messages + 9}"
+
+
+def test_apply_cron_history_profile_preserves_legal_tool_boundary() -> None:
+    session = Session(key="cron:test")
+    session.messages.append({"role": "user", "content": "old1"})
+    session.messages.extend(_tool_turn("old1", 0))
+    session.messages.append({"role": "user", "content": "old2"})
+    session.messages.extend(_tool_turn("old2", 0))
+    session.messages.append({"role": "user", "content": "keep"})
+    session.messages.extend(_tool_turn("keep", 0))
+    session.messages.append({"role": "assistant", "content": "done"})
+
+    apply_cron_history_profile(session, "compact")
+
+    history = session.get_history(max_messages=500)
+    _assert_no_orphans(history)
+    assert history[0]["role"] == "user"
+    assert history[0]["content"] != "old1"
 
 
 @pytest.mark.asyncio

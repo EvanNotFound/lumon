@@ -20,9 +20,19 @@ Fixed reminder:
 cron(action="add", message="Time to take a break!", every_seconds=1200)
 ```
 
+Stateless reminder (do not reuse prior transcript between runs):
+```
+cron(action="add", message="Time to take a break!", every_seconds=1200, profile="stateless")
+```
+
 Dynamic task (agent executes each time):
 ```
 cron(action="add", message="Check HKUDS/nanobot GitHub stars and report", every_seconds=600)
+```
+
+Assistant-like recurring task with a larger rolling history window:
+```
+cron(action="add", message="Continue weekly planning review", every_seconds=86400, profile="normal")
 ```
 
 One-time scheduled task (compute ISO datetime from current time):
@@ -61,3 +71,9 @@ cron(action="remove", job_id="abc123")
 ## Timezone
 
 Use `tz` with `cron_expr` or `at` to schedule in a specific IANA timezone. Without `tz`, the server's local timezone is used.
+
+## History Profiles
+
+- `stateless` — clear prior cron transcript before each run
+- `compact` — keep a small recent rolling suffix (default)
+- `normal` — keep a larger recent rolling suffix for assistant-like recurring jobs

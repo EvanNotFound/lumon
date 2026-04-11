@@ -30,6 +30,7 @@ async def test_at_with_tz_naive_datetime(tmp_path) -> None:
 
     jobs = tool._cron.list_jobs()
     assert len(jobs) == 1
+    assert jobs[0].profile == "compact"
     # Asia/Shanghai is UTC+8, so 14:00 Shanghai = 06:00 UTC
     expected_dt = datetime(2026, 3, 18, 14, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     expected_ms = int(expected_dt.timestamp() * 1000)
@@ -101,3 +102,21 @@ async def test_at_with_invalid_tz_fails(tmp_path) -> None:
     )
     assert "Error" in result
     assert "unknown timezone" in result
+
+
+@pytest.mark.asyncio
+async def test_add_accepts_explicit_profile(tmp_path) -> None:
+    tool = _make_tool(tmp_path)
+    result = await tool.execute(
+        action="add",
+        message="Planning loop",
+        every_seconds=600,
+        profile="normal",
+    )
+
+    assert "Created job" in result
+    assert "profile: normal" in result
+
+    jobs = tool._cron.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].profile == "normal"
