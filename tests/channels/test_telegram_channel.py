@@ -36,8 +36,10 @@ class _FakeHTTPXRequest:
 class _FakeUpdater:
     def __init__(self, on_start_polling) -> None:
         self._on_start_polling = on_start_polling
+        self.start_polling_kwargs = None
 
     async def start_polling(self, **kwargs) -> None:
+        self.start_polling_kwargs = kwargs
         self._on_start_polling()
 
 
@@ -212,6 +214,7 @@ async def test_start_creates_separate_pools_with_proxy(monkeypatch) -> None:
     assert poll_req.kwargs["connection_pool_size"] == 4
     assert builder.request_value is api_req
     assert builder.get_updates_request_value is poll_req
+    assert app.updater.start_polling_kwargs["allowed_updates"] == ["message", "callback_query"]
     assert any(cmd.command == "status" for cmd in app.bot.commands)
     assert any(cmd.command == "thinking" for cmd in app.bot.commands)
     assert any(cmd.command == "mcp" for cmd in app.bot.commands)
@@ -246,6 +249,7 @@ async def test_start_respects_custom_pool_config(monkeypatch) -> None:
     assert api_req.kwargs["connection_pool_size"] == 32
     assert api_req.kwargs["pool_timeout"] == 10.0
     assert poll_req.kwargs["pool_timeout"] == 10.0
+    assert app.updater.start_polling_kwargs["allowed_updates"] == ["message", "callback_query"]
 
 
 @pytest.mark.asyncio
