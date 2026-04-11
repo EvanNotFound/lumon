@@ -16,6 +16,7 @@ from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.openai_responses_common import (
     build_prompt_cache_key,
     convert_messages_to_responses,
+    convert_responses_tool_choice,
     convert_responses_tools,
     map_responses_finish_reason,
     maybe_mapping,
@@ -97,7 +98,7 @@ class OpenAIResponsesProvider(LLMProvider):
             kwargs["reasoning"] = {"effort": reasoning_effort}
         if converted_tools:
             kwargs["tools"] = converted_tools
-            kwargs["tool_choice"] = tool_choice or "auto"
+            kwargs["tool_choice"] = convert_responses_tool_choice(tool_choice)
             kwargs["parallel_tool_calls"] = True
 
         return kwargs

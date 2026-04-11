@@ -139,6 +139,28 @@ def convert_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str
     return converted
 
 
+def convert_responses_tool_choice(tool_choice: str | dict[str, Any] | None) -> str | dict[str, Any]:
+    """Convert internal tool_choice values to the Responses API shape."""
+    if not isinstance(tool_choice, dict):
+        return tool_choice or "auto"
+
+    choice_type = tool_choice.get("type")
+    if choice_type != "function":
+        return tool_choice
+
+    name = tool_choice.get("name")
+    if isinstance(name, str) and name:
+        return {"type": "function", "name": name}
+
+    function = tool_choice.get("function")
+    if isinstance(function, dict):
+        nested_name = function.get("name")
+        if isinstance(nested_name, str) and nested_name:
+            return {"type": "function", "name": nested_name}
+
+    return tool_choice
+
+
 def split_system_prompt_for_responses(system_prompt: str) -> tuple[str, list[dict[str, Any]]]:
     """Keep stable prompt sections in instructions and move memory into input."""
     if not system_prompt:

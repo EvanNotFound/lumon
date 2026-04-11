@@ -118,10 +118,12 @@ class TestMemoryConsolidationTypeHandling:
                 ToolCallRequest(
                     id="call_1",
                     name="save_memory",
-                    arguments=json.dumps({
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }),
+                    arguments=json.dumps(
+                        {
+                            "history_entry": "[2026-01-01] User discussed testing.",
+                            "memory_update": "# Memory\nUser likes testing.",
+                        }
+                    ),
                 )
             ],
         )
@@ -175,10 +177,12 @@ class TestMemoryConsolidationTypeHandling:
                 ToolCallRequest(
                     id="call_1",
                     name="save_memory",
-                    arguments=[{
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }],
+                    arguments=[
+                        {
+                            "history_entry": "[2026-01-01] User discussed testing.",
+                            "memory_update": "# Memory\nUser likes testing.",
+                        }
+                    ],
                 )
             ],
         )
@@ -241,7 +245,9 @@ class TestMemoryConsolidationTypeHandling:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_missing_history_entry_returns_false_without_writing(self, tmp_path: Path) -> None:
+    async def test_missing_history_entry_returns_false_without_writing(
+        self, tmp_path: Path
+    ) -> None:
         """Do not persist partial results when required fields are missing."""
         store = MemoryStore(tmp_path)
         provider = AsyncMock()
@@ -266,7 +272,9 @@ class TestMemoryConsolidationTypeHandling:
         assert not store.memory_file.exists()
 
     @pytest.mark.asyncio
-    async def test_missing_memory_update_returns_false_without_writing(self, tmp_path: Path) -> None:
+    async def test_missing_memory_update_returns_false_without_writing(
+        self, tmp_path: Path
+    ) -> None:
         """Do not append history if memory_update is missing."""
         store = MemoryStore(tmp_path)
         provider = AsyncMock()
@@ -331,13 +339,15 @@ class TestMemoryConsolidationTypeHandling:
     @pytest.mark.asyncio
     async def test_retries_transient_error_then_succeeds(self, tmp_path: Path, monkeypatch) -> None:
         store = MemoryStore(tmp_path)
-        provider = ScriptedProvider([
-            LLMResponse(content="503 server error", finish_reason="error"),
-            _make_tool_response(
-                history_entry="[2026-01-01] User discussed testing.",
-                memory_update="# Memory\nUser likes testing.",
-            ),
-        ])
+        provider = ScriptedProvider(
+            [
+                LLMResponse(content="503 server error", finish_reason="error"),
+                _make_tool_response(
+                    history_entry="[2026-01-01] User discussed testing.",
+                    memory_update="# Memory\nUser likes testing.",
+                ),
+            ]
+        )
         messages = _make_messages(message_count=60)
         delays: list[int] = []
 
@@ -431,6 +441,38 @@ class TestMemoryConsolidationTypeHandling:
 
         assert result is False
         assert not store.history_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_fallback_on_unknown_parameter_error(self, tmp_path: Path) -> None:
+        """Responses-compatible proxies may reject chat-style tool_choice.function payloads."""
+        store = MemoryStore(tmp_path)
+        error_resp = LLMResponse(
+            content="Error: status_code=400, Unknown parameter: 'tool_choice.function'.",
+            finish_reason="error",
+            tool_calls=[],
+        )
+        ok_resp = _make_tool_response(
+            history_entry="[2026-01-01] Unknown parameter fallback worked.",
+            memory_update="# Memory\nFallback OK.",
+        )
+
+        call_log: list[dict] = []
+
+        async def _tracking_chat(**kwargs):
+            call_log.append(kwargs)
+            return error_resp if len(call_log) == 1 else ok_resp
+
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(side_effect=_tracking_chat)
+        messages = _make_messages(message_count=60)
+
+        result = await store.consolidate(messages, provider, "test-model")
+
+        assert result is True
+        assert len(call_log) == 2
+        assert isinstance(call_log[0]["tool_choice"], dict)
+        assert call_log[1]["tool_choice"] == "auto"
+        assert "Unknown parameter fallback worked." in store.history_file.read_text()
 
     @pytest.mark.asyncio
     async def test_raw_archive_after_consecutive_failures(self, tmp_path: Path) -> None:

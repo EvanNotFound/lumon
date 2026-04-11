@@ -201,3 +201,41 @@ async def test_responses_provider_stream_parses_text_and_tool_calls() -> None:
     assert response.tool_calls[0].id == "call_1|fc_1"
     assert response.tool_calls[0].name == "read"
     assert response.tool_calls[0].arguments == {"path": "README.md"}
+
+
+@pytest.mark.asyncio
+async def test_responses_provider_flattens_forced_function_tool_choice() -> None:
+    spec = find_by_name("openai")
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.responses.create = AsyncMock(
+            return_value={"status": "completed", "output": [], "output_text": "ok"}
+        )
+        provider = OpenAIResponsesProvider(api_key="test-key", default_model="gpt-5", spec=spec)
+        await provider.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "memory_decision", "parameters": {}}}],
+            tool_choice={"type": "function", "function": {"name": "memory_decision"}},
+        )
+
+    kwargs = mock_client.return_value.responses.create.await_args.kwargs
+    assert kwargs["tool_choice"] == {"type": "function", "name": "memory_decision"}
+
+
+@pytest.mark.asyncio
+async def test_responses_provider_preserves_string_tool_choice() -> None:
+    spec = find_by_name("openai")
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.responses.create = AsyncMock(
+            return_value={"status": "completed", "output": [], "output_text": "ok"}
+        )
+        provider = OpenAIResponsesProvider(api_key="test-key", default_model="gpt-5", spec=spec)
+        await provider.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "read", "parameters": {}}}],
+            tool_choice="required",
+        )
+
+    kwargs = mock_client.return_value.responses.create.await_args.kwargs
+    assert kwargs["tool_choice"] == "required"
