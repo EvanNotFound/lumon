@@ -120,6 +120,7 @@ class TestRestartCommand:
         assert response is not None
         assert "/restart" in response.content
         assert "/status" in response.content
+        assert "/thinking" in response.content
         assert "/mcp" in response.content
         assert response.metadata == {"render_as": "text"}
 
@@ -178,6 +179,7 @@ class TestRestartCommand:
         loop, _bus = _make_loop()
         session = MagicMock()
         session.get_history.return_value = [{"role": "user"}] * 3
+        session.metadata = {"reasoning_effort": "high"}
         loop.sessions.get_or_create.return_value = session
         loop._start_time = time.time() - 125
         loop._last_usage = {"prompt_tokens": 0, "completion_tokens": 0}
@@ -191,6 +193,7 @@ class TestRestartCommand:
 
         assert response is not None
         assert "Model: test-model" in response.content
+        assert "Thinking: high (chat override)" in response.content
         assert "Tokens: 0 in / 0 out" in response.content
         assert "Context: 20k/64k (31%)" in response.content
         assert "Session: 3 messages" in response.content

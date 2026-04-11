@@ -30,7 +30,7 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
-from nanobot.session.manager import Session, SessionManager
+from nanobot.session.manager import Session, SessionManager, get_effective_reasoning_effort
 from nanobot.utils.helpers import should_allow_live_streaming, trim_history_for_budget
 
 if TYPE_CHECKING:
@@ -340,12 +340,36 @@ class AgentLoop:
             finally:
                 self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(
+        self,
+        channel: str,
+        chat_id: str,
+        message_id: str | None = None,
+        *,
+        session_key: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
         """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
-            if tool := self.tools.get(name):
-                if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+        if tool := self.tools.get("message"):
+            if hasattr(tool, "set_context"):
+                tool.set_context(channel, chat_id, message_id)
+        if tool := self.tools.get("spawn"):
+            if hasattr(tool, "set_context"):
+                tool.set_context(
+                    channel,
+                    chat_id,
+                    session_key or f"{channel}:{chat_id}",
+                    reasoning_effort,
+                )
+        if tool := self.tools.get("cron"):
+            if hasattr(tool, "set_context"):
+                tool.set_context(channel, chat_id)
+
+    def _get_effective_reasoning_effort(self, session: Session) -> str | None:
+        """Resolve the effective reasoning effort for the given session."""
+        generation = getattr(self.provider, "generation", None)
+        default_effort = getattr(generation, "reasoning_effort", None)
+        return get_effective_reasoning_effort(session, default_effort)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -457,6 +481,8 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session_key: str | None = None,
+        reasoning_effort: str | None = None,
         disabled_tools: set[str] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
@@ -532,7 +558,13 @@ class AgentLoop:
 
                 # Re-bind tool context right before execution so that
                 # concurrent sessions don't clobber each other's routing.
-                self._loop._set_tool_context(channel, chat_id, message_id)
+                self._loop._set_tool_context(
+                    channel,
+                    chat_id,
+                    message_id,
+                    session_key=session_key,
+                    reasoning_effort=reasoning_effort,
+                )
 
             async def on_stream(self, context: AgentHookContext, delta: str) -> None:
                 if not self._raw_stream:
@@ -567,6 +599,7 @@ class AgentLoop:
                 tools=_ScopedTools(self.tools, blocked_tools),
                 model=self.model,
                 max_iterations=self.max_iterations,
+                reasoning_effort=reasoning_effort,
                 hook=_LoopHook(self, turn_start_index, on_stream, on_stream_end),
                 concurrent_tools=True,
             )
@@ -750,11 +783,18 @@ class AgentLoop:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
+            reasoning_effort = self._get_effective_reasoning_effort(session)
             await self.memory_consolidator.consolidate_session_if_needed(session)
             history = session.get_history(max_messages=0)
             retrieval_query = self._build_memory_retrieval_query(history, msg.content)
             await self.context.memory.load_prompt_memory(retrieval_query)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(
+                channel,
+                chat_id,
+                msg.metadata.get("message_id"),
+                session_key=key,
+                reasoning_effort=reasoning_effort,
+            )
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             skill_names = self.context.skills.match_message_skills(msg.content)
             messages = self.context.build_messages(
@@ -770,6 +810,8 @@ class AgentLoop:
                 channel=channel,
                 chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                session_key=key,
+                reasoning_effort=reasoning_effort,
                 disabled_tools=disabled_tools,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
@@ -789,6 +831,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        reasoning_effort = self._get_effective_reasoning_effort(session)
 
         # Slash commands
         raw = msg.content.strip()
@@ -801,7 +844,13 @@ class AgentLoop:
         retrieval_query = self._build_memory_retrieval_query(history, msg.content)
         await self.context.memory.load_prompt_memory(retrieval_query)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(
+            msg.channel,
+            msg.chat_id,
+            msg.metadata.get("message_id"),
+            session_key=key,
+            reasoning_effort=reasoning_effort,
+        )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -838,6 +887,8 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
+            session_key=key,
+            reasoning_effort=reasoning_effort,
             disabled_tools=disabled_tools,
         )
 

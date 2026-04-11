@@ -63,13 +63,16 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
-        bg_task = asyncio.create_task(self._run_subagent(task_id, task, display_label, origin))
+        bg_task = asyncio.create_task(
+            self._run_subagent(task_id, task, display_label, origin, reasoning_effort)
+        )
         self._running_tasks[task_id] = bg_task
         if session_key:
             self._session_tasks.setdefault(session_key, set()).add(task_id)
@@ -92,6 +95,7 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        reasoning_effort: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -143,6 +147,7 @@ class SubagentManager:
                     tools=tools,
                     model=self.model,
                     max_iterations=15,
+                    reasoning_effort=reasoning_effort,
                     max_iterations_message="Task completed but no final response was generated.",
                     hook=_SubagentHook(),
                 )

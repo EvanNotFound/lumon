@@ -204,6 +204,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("help", "Show available commands"),
         BotCommand("restart", "Restart the bot"),
         BotCommand("status", "Show bot status"),
+        BotCommand("thinking", "Show or change thinking level"),
         BotCommand("mcp", "Check MCP server status"),
     ]
 
@@ -287,6 +288,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("stop", self._forward_command))
         self._app.add_handler(CommandHandler("restart", self._forward_command))
         self._app.add_handler(CommandHandler("status", self._forward_command))
+        self._app.add_handler(CommandHandler("thinking", self._forward_command))
         self._app.add_handler(CommandHandler("mcp", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._on_help))
 

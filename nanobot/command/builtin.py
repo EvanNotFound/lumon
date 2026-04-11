@@ -10,10 +10,36 @@ import sys
 from nanobot import __version__
 from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
+from nanobot.session.manager import (
+    clear_session_reasoning_effort_override,
+    describe_session_reasoning_effort,
+    set_session_reasoning_effort_override,
+)
 from nanobot.utils.helpers import build_status_content
 
 # Pattern to match $skill-name tokens (word chars + hyphens)
 _SKILL_REF = re.compile(r"\$([A-Za-z][A-Za-z0-9_-]*)")
+_THINKING_LEVELS = ("low", "medium", "high")
+
+
+def _get_session_and_default_reasoning(ctx: CommandContext):
+    """Resolve the current session and provider default reasoning effort."""
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    generation = getattr(loop.provider, "generation", None)
+    default_effort = getattr(generation, "reasoning_effort", None)
+    return session, default_effort
+
+
+def _build_thinking_usage() -> str:
+    """Build canonical usage text for the /thinking command."""
+    choices = "|".join(["off", *_THINKING_LEVELS])
+    return f"Use: /thinking {choices}"
+
+
+def _build_thinking_status_message(level: str, source: str) -> str:
+    """Build a human-readable status line for chat thinking level."""
+    return f"Thinking level for this chat: {level}\nSource: {source}"
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
@@ -48,7 +74,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     """Build an outbound status message for a session."""
     loop = ctx.loop
-    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    session, default_effort = _get_session_and_default_reasoning(ctx)
     ctx_est = 0
     try:
         ctx_est, _ = loop.memory_consolidator.estimate_session_prompt_tokens(session)
@@ -56,6 +82,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
         pass
     if ctx_est <= 0:
         ctx_est = loop._last_usage.get("prompt_tokens", 0)
+    thinking_level, thinking_source = describe_session_reasoning_effort(session, default_effort)
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
@@ -67,6 +94,8 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             context_window_tokens=loop.context_window_tokens,
             session_msg_count=len(session.get_history(max_messages=0)),
             context_tokens_estimate=ctx_est,
+            thinking_level=thinking_level,
+            thinking_source=thinking_source,
         ),
         metadata={"render_as": "text"},
     )
@@ -134,6 +163,58 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
         content="New session started.",
+    )
+
+
+async def cmd_thinking(ctx: CommandContext) -> OutboundMessage:
+    """Inspect or change the chat-scoped thinking level."""
+    loop = ctx.loop
+    session, default_effort = _get_session_and_default_reasoning(ctx)
+    arg = ctx.args.strip().lower()
+
+    if not arg:
+        level, source = describe_session_reasoning_effort(session, default_effort)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"{_build_thinking_status_message(level, source)}\n{_build_thinking_usage()}",
+            metadata={"render_as": "text"},
+        )
+
+    if arg == "off":
+        clear_session_reasoning_effort_override(session)
+        loop.sessions.save(session)
+        level, source = describe_session_reasoning_effort(session, default_effort)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                "Thinking override cleared for this chat.\n"
+                f"{_build_thinking_status_message(level, source)}"
+            ),
+            metadata={"render_as": "text"},
+        )
+
+    try:
+        level = set_session_reasoning_effort_override(session, arg)
+    except ValueError:
+        valid = ", ".join(["off", *_THINKING_LEVELS])
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                f"Invalid thinking level: {ctx.args.strip() or arg}\n"
+                f"Supported values: {valid}\n{_build_thinking_usage()}"
+            ),
+            metadata={"render_as": "text"},
+        )
+
+    loop.sessions.save(session)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=f"Thinking level set for this chat.\n{_build_thinking_status_message(level, 'chat override')}",
+        metadata={"render_as": "text"},
     )
 
 
@@ -218,6 +299,7 @@ def build_help_text() -> str:
         "/stop — Stop the current task",
         "/restart — Restart the bot",
         "/status — Show bot status",
+        "/thinking — Show or change chat thinking level",
         "/mcp — Check MCP server status",
         "/skills — List available skills",
         "$<name> — Activate a skill inline (e.g. $weather what's the forecast)",
@@ -233,6 +315,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
+    router.exact("/thinking", cmd_thinking)
+    router.prefix("/thinking ", cmd_thinking)
     router.exact("/mcp", cmd_mcp)
     router.exact("/help", cmd_help)
     router.exact("/skills", cmd_skill_list)

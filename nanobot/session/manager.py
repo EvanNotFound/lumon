@@ -12,6 +12,56 @@ from loguru import logger
 from nanobot.config.paths import get_legacy_sessions_dir
 from nanobot.utils.helpers import ensure_dir, safe_filename
 
+VALID_REASONING_EFFORTS = frozenset({"low", "medium", "high"})
+
+
+def normalize_reasoning_effort(value: Any) -> str | None:
+    """Normalize a reasoning-effort value to the supported runtime set."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in VALID_REASONING_EFFORTS else None
+
+
+def get_session_reasoning_effort_override(session: "Session") -> str | None:
+    """Return the chat-scoped reasoning override stored in session metadata."""
+    return normalize_reasoning_effort(session.metadata.get("reasoning_effort"))
+
+
+def set_session_reasoning_effort_override(session: "Session", value: str) -> str:
+    """Persist a supported chat-scoped reasoning override into session metadata."""
+    normalized = normalize_reasoning_effort(value)
+    if normalized is None:
+        raise ValueError(f"Unsupported reasoning effort: {value}")
+    session.metadata["reasoning_effort"] = normalized
+    session.updated_at = datetime.now()
+    return normalized
+
+
+def clear_session_reasoning_effort_override(session: "Session") -> None:
+    """Remove any chat-scoped reasoning override from session metadata."""
+    session.metadata.pop("reasoning_effort", None)
+    session.updated_at = datetime.now()
+
+
+def get_effective_reasoning_effort(session: "Session", default: Any = None) -> str | None:
+    """Resolve the effective reasoning effort for a session."""
+    override = get_session_reasoning_effort_override(session)
+    if override is not None:
+        return override
+    return normalize_reasoning_effort(default)
+
+
+def describe_session_reasoning_effort(session: "Session", default: Any = None) -> tuple[str, str]:
+    """Describe the effective session reasoning effort and where it came from."""
+    override = get_session_reasoning_effort_override(session)
+    if override is not None:
+        return override, "chat override"
+    normalized_default = normalize_reasoning_effort(default)
+    if normalized_default is not None:
+        return normalized_default, "default"
+    return "off", "default"
+
 
 @dataclass
 class Session:
@@ -34,12 +84,7 @@ class Session:
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
-        msg = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-            **kwargs
-        }
+        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **kwargs}
         self.messages.append(msg)
         self.updated_at = datetime.now()
 
@@ -59,7 +104,7 @@ class Session:
                 if tid and str(tid) not in declared:
                     start = i + 1
                     declared.clear()
-                    for prev in messages[start:i + 1]:
+                    for prev in messages[start : i + 1]:
                         if prev.get("role") == "assistant":
                             for tc in prev.get("tool_calls") or []:
                                 if isinstance(tc, dict) and tc.get("id"):
@@ -68,7 +113,7 @@ class Session:
 
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input, aligned to a legal tool-call boundary."""
-        unconsolidated = self.messages[self.last_consolidated:]
+        unconsolidated = self.messages[self.last_consolidated :]
         sliced = unconsolidated[-max_messages:]
 
         # Drop leading non-user messages to avoid starting mid-turn when possible.
@@ -199,7 +244,11 @@ class SessionManager:
 
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
-                        created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+                        created_at = (
+                            datetime.fromisoformat(data["created_at"])
+                            if data.get("created_at")
+                            else None
+                        )
                         last_consolidated = data.get("last_consolidated", 0)
                     else:
                         messages.append(data)
@@ -209,7 +258,7 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
             )
         except Exception as e:
             logger.warning("Failed to load session {}: {}", key, e)
@@ -226,7 +275,7 @@ class SessionManager:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
+                "last_consolidated": session.last_consolidated,
             }
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
@@ -256,12 +305,14 @@ class SessionManager:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
                             key = data.get("key") or path.stem.replace("_", ":", 1)
-                            sessions.append({
-                                "key": key,
-                                "created_at": data.get("created_at"),
-                                "updated_at": data.get("updated_at"),
-                                "path": str(path)
-                            })
+                            sessions.append(
+                                {
+                                    "key": key,
+                                    "created_at": data.get("created_at"),
+                                    "updated_at": data.get("updated_at"),
+                                    "path": str(path),
+                                }
+                            )
             except Exception:
                 continue
 

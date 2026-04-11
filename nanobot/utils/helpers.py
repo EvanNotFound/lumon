@@ -347,6 +347,8 @@ def build_status_content(
     context_window_tokens: int,
     session_msg_count: int,
     context_tokens_estimate: int,
+    thinking_level: str | None = None,
+    thinking_source: str | None = None,
 ) -> str:
     """Build a human-readable runtime status snapshot."""
     uptime_s = int(time.time() - start_time)
@@ -370,6 +372,11 @@ def build_status_content(
         [
             f"\U0001f408 nanobot v{version}",
             f"\U0001f9e0 Model: {model}",
+            (
+                f"\U0001f914 Thinking: {thinking_level} ({thinking_source})"
+                if thinking_level is not None and thinking_source is not None
+                else "\U0001f914 Thinking: unavailable"
+            ),
             f"\U0001f4ca Tokens: {last_in} in / {last_out} out",
             (
                 f"\U0001f5c3 Cache: {cached_tokens} cached prompt tokens"
