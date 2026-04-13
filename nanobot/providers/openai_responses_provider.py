@@ -104,27 +104,76 @@ class OpenAIResponsesProvider(LLMProvider):
         return kwargs
 
     @staticmethod
-    def _extract_output_text(output_items: list[Any]) -> str | None:
+    def _extract_text_content(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                text = OpenAIResponsesProvider._extract_text_content(item)
+                if text:
+                    parts.append(text)
+            return "".join(parts) or None
+
+        value_map = maybe_mapping(value)
+        if value_map is not None:
+            text = value_map.get("text")
+            if text is not None and text is not value:
+                extracted = OpenAIResponsesProvider._extract_text_content(text)
+                if extracted is not None:
+                    return extracted
+            nested_value = value_map.get("value")
+            if isinstance(nested_value, str):
+                return nested_value
+            content = value_map.get("content")
+            if content is not None and content is not value:
+                extracted = OpenAIResponsesProvider._extract_text_content(content)
+                if extracted is not None:
+                    return extracted
+
+        text = getattr(value, "text", None)
+        if text is not None and text is not value:
+            extracted = OpenAIResponsesProvider._extract_text_content(text)
+            if extracted is not None:
+                return extracted
+        nested_value = getattr(value, "value", None)
+        if isinstance(nested_value, str):
+            return nested_value
+        content = getattr(value, "content", None)
+        if content is not None and content is not value:
+            extracted = OpenAIResponsesProvider._extract_text_content(content)
+            if extracted is not None:
+                return extracted
+        return None
+
+    @classmethod
+    def _extract_output_text(cls, output_items: list[Any]) -> str | None:
         parts: list[str] = []
         for item in output_items:
             item_map = maybe_mapping(item) or {}
             if item_map.get("type") == "message":
-                for content in item_map.get("content") or []:
-                    content_map = maybe_mapping(content) or {}
-                    if content_map.get("type") in {"output_text", "text"} and isinstance(
-                        content_map.get("text"), str
-                    ):
-                        parts.append(content_map["text"])
+                text = cls._extract_text_content(
+                    item_map.get("content") or getattr(item, "content", None)
+                )
+                if text:
+                    parts.append(text)
         return "".join(parts) or None
 
     @classmethod
-    def _parse_response(cls, response: Any) -> LLMResponse:
+    def _extract_response_content(cls, response: Any) -> str | None:
         response_map = maybe_mapping(response) or {}
-        output_items = response_map.get("output") or []
-        content = response_map.get("output_text") or getattr(response, "output_text", None)
-        if not isinstance(content, str) or not content:
-            content = cls._extract_output_text(output_items)
+        content = cls._extract_text_content(
+            response_map.get("output_text") or getattr(response, "output_text", None)
+        )
+        if content:
+            return content
+        output_items = response_map.get("output") or getattr(response, "output", None) or []
+        return cls._extract_output_text(output_items)
 
+    @classmethod
+    def _extract_tool_calls(cls, output_items: list[Any]) -> list[ToolCallRequest]:
         tool_calls: list[ToolCallRequest] = []
         for item in output_items:
             item_map = maybe_mapping(item) or {}
@@ -141,6 +190,14 @@ class OpenAIResponsesProvider(LLMProvider):
                     arguments=args if isinstance(args, dict) else {},
                 )
             )
+        return tool_calls
+
+    @classmethod
+    def _parse_response(cls, response: Any) -> LLMResponse:
+        response_map = maybe_mapping(response) or {}
+        output_items = response_map.get("output") or []
+        content = cls._extract_response_content(response)
+        tool_calls = cls._extract_tool_calls(output_items)
 
         finish_reason = map_responses_finish_reason(
             response_map.get("status") or getattr(response, "status", None)
@@ -207,6 +264,7 @@ class OpenAIResponsesProvider(LLMProvider):
         tool_call_buffers: dict[str, dict[str, Any]] = {}
         usage: dict[str, int] = {}
         finish_reason = "stop"
+        final_response: Any = None
 
         try:
             stream = await self._client.responses.create(**kwargs)
@@ -294,8 +352,21 @@ class OpenAIResponsesProvider(LLMProvider):
             if tool_calls:
                 finish_reason = "tool_calls"
 
+            content = "".join(content_parts) or None
+            if content is None and final_response is not None:
+                content = type(self)._extract_response_content(final_response)
+            if not tool_calls and final_response is not None:
+                final_output = (
+                    (maybe_mapping(final_response) or {}).get("output")
+                    or getattr(final_response, "output", None)
+                    or []
+                )
+                tool_calls = type(self)._extract_tool_calls(final_output)
+                if tool_calls:
+                    finish_reason = "tool_calls"
+
             return LLMResponse(
-                content="".join(content_parts) or None,
+                content=content,
                 tool_calls=tool_calls,
                 finish_reason=finish_reason,
                 usage=usage,

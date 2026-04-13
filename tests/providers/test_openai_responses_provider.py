@@ -144,6 +144,55 @@ async def test_responses_provider_uses_stable_cache_key_and_parses_cached_tokens
 
 
 @pytest.mark.asyncio
+async def test_responses_provider_parses_nested_message_output_text() -> None:
+    spec = find_by_name("openai")
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.responses.create = AsyncMock(
+            return_value={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": "hello "},
+                            {"type": "output_text", "text": "world"},
+                        ],
+                    }
+                ],
+            }
+        )
+        provider = OpenAIResponsesProvider(api_key="test-key", default_model="gpt-5", spec=spec)
+        response = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert response.content == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_responses_provider_parses_wrapped_text_values() -> None:
+    spec = find_by_name("openai")
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.responses.create = AsyncMock(
+            return_value={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": {"value": "wrapped text"}},
+                        ],
+                    }
+                ],
+            }
+        )
+        provider = OpenAIResponsesProvider(api_key="test-key", default_model="gpt-5", spec=spec)
+        response = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert response.content == "wrapped text"
+
+
+@pytest.mark.asyncio
 async def test_responses_provider_stream_parses_text_and_tool_calls() -> None:
     spec = find_by_name("openai")
     stream = _AsyncEventStream(
@@ -201,6 +250,50 @@ async def test_responses_provider_stream_parses_text_and_tool_calls() -> None:
     assert response.tool_calls[0].id == "call_1|fc_1"
     assert response.tool_calls[0].name == "read"
     assert response.tool_calls[0].arguments == {"path": "README.md"}
+
+
+@pytest.mark.asyncio
+async def test_responses_provider_stream_recovers_final_text_from_done_event() -> None:
+    spec = find_by_name("openai")
+    stream = _AsyncEventStream(
+        [
+            {
+                "type": "response.done",
+                "response": {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "final from done"},
+                            ],
+                        }
+                    ],
+                    "usage": {
+                        "input_tokens": 12,
+                        "output_tokens": 4,
+                        "total_tokens": 16,
+                    },
+                },
+            }
+        ]
+    )
+    deltas: list[str] = []
+
+    async def _on_delta(delta: str) -> None:
+        deltas.append(delta)
+
+    with patch("nanobot.providers.openai_responses_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.responses.create = AsyncMock(return_value=stream)
+        provider = OpenAIResponsesProvider(api_key="test-key", default_model="gpt-5", spec=spec)
+        response = await provider.chat_stream(
+            messages=[{"role": "system", "content": "# stable"}, {"role": "user", "content": "hi"}],
+            on_content_delta=_on_delta,
+        )
+
+    assert deltas == []
+    assert response.content == "final from done"
+    assert response.finish_reason == "stop"
 
 
 @pytest.mark.asyncio
